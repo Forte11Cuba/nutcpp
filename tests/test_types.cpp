@@ -3,6 +3,7 @@
 #include "nutcpp/types/priv_key.h"
 #include "nutcpp/types/tag.h"
 #include "nutcpp/types/secret.h"
+#include "nutcpp/types/keyset_id.h"
 
 using namespace nutcpp;
 
@@ -138,4 +139,59 @@ TEST_CASE("StringSecret JSON roundtrip", "[types]") {
 
     StringSecret s2(j.get<std::string>());
     REQUIRE(s2.value() == s.value());
+}
+
+// --- KeysetId tests ---
+
+TEST_CASE("KeysetId v1 (16 chars)", "[types]") {
+    KeysetId kid("00abcdef01234567");
+    REQUIRE(kid.to_string() == "00abcdef01234567");
+    REQUIRE(kid.get_version() == 0x00);
+}
+
+TEST_CASE("KeysetId v2 full (66 chars)", "[types]") {
+    // 66 hex chars = 33 bytes (like a compressed pubkey)
+    std::string id66 = "02" + std::string(64, 'a');
+    KeysetId kid(id66);
+    REQUIRE(kid.get_version() == 0x02);
+    REQUIRE(kid.to_string() == id66);
+}
+
+TEST_CASE("KeysetId legacy (12 chars)", "[types]") {
+    KeysetId kid("aabbccddeeff");
+    REQUIRE(kid.to_string() == "aabbccddeeff");
+}
+
+TEST_CASE("KeysetId invalid length throws", "[types]") {
+    REQUIRE_THROWS_AS(KeysetId("abcd"), std::invalid_argument);
+    REQUIRE_THROWS_AS(KeysetId(""), std::invalid_argument);
+    REQUIRE_THROWS_AS(KeysetId("abcdef0123456789aa"), std::invalid_argument);
+}
+
+TEST_CASE("KeysetId invalid hex throws", "[types]") {
+    REQUIRE_THROWS_AS(KeysetId("00abcdefGGGG5678"), std::invalid_argument);
+}
+
+TEST_CASE("KeysetId case-insensitive equality", "[types]") {
+    KeysetId a("00ABCDEF01234567");
+    KeysetId b("00abcdef01234567");
+    REQUIRE(a == b);
+}
+
+TEST_CASE("KeysetId get_bytes", "[types]") {
+    KeysetId kid("00abcdef01234567");
+    auto bytes = kid.get_bytes();
+    REQUIRE(bytes.size() == 8);
+    REQUIRE(bytes[0] == 0x00);
+    REQUIRE(bytes[1] == 0xab);
+    REQUIRE(bytes[7] == 0x67);
+}
+
+TEST_CASE("KeysetId JSON roundtrip", "[types]") {
+    KeysetId kid("00abcdef01234567");
+    nlohmann::json j = kid;
+    REQUIRE(j.get<std::string>() == "00abcdef01234567");
+
+    KeysetId kid2(j.get<std::string>());
+    REQUIRE(kid == kid2);
 }
