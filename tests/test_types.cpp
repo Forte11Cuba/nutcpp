@@ -6,6 +6,7 @@
 #include "nutcpp/types/keyset_id.h"
 #include "nutcpp/types/dleq.h"
 #include "nutcpp/types/blinded_message.h"
+#include "nutcpp/types/blind_signature.h"
 
 using namespace nutcpp;
 
@@ -285,4 +286,59 @@ TEST_CASE("BlindedMessage JSON with witness", "[types]") {
     REQUIRE(bm2.B_.to_hex() == pk_hex);
     REQUIRE(bm2.witness.has_value());
     REQUIRE(bm2.witness.value() == "witness_value");
+}
+
+// --- BlindSignature tests ---
+
+TEST_CASE("BlindSignature basic construction", "[types]") {
+    std::string pk_hex = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
+    BlindSignature bs{64, KeysetId("00abcdef01234567"), PubKey(pk_hex)};
+    REQUIRE(bs.amount == 64);
+    REQUIRE(bs.id.to_string() == "00abcdef01234567");
+    REQUIRE(bs.C_.to_hex() == pk_hex);
+    REQUIRE(!bs.dleq.has_value());
+}
+
+TEST_CASE("BlindSignature JSON roundtrip", "[types]") {
+    std::string pk_hex = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
+    BlindSignature bs{16, KeysetId("00abcdef01234567"), PubKey(pk_hex)};
+
+    nlohmann::json j = bs;
+    REQUIRE(j["amount"] == 16);
+    REQUIRE(j["id"] == "00abcdef01234567");
+    REQUIRE(j["C_"] == pk_hex);
+    REQUIRE(!j.contains("dleq"));
+
+    BlindSignature bs2{0, KeysetId("00abcdef01234567"), PubKey(pk_hex)};
+    from_json(j, bs2);
+    REQUIRE(bs2.amount == 16);
+    REQUIRE(bs2.id == KeysetId("00abcdef01234567"));
+    REQUIRE(bs2.C_.to_hex() == pk_hex);
+    REQUIRE(!bs2.dleq.has_value());
+}
+
+TEST_CASE("BlindSignature JSON with DLEQ", "[types]") {
+    std::string pk_hex = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
+    std::string e_hex = "0000000000000000000000000000000000000000000000000000000000000001";
+    std::string s_hex = "0000000000000000000000000000000000000000000000000000000000000002";
+    std::string r_hex = "0000000000000000000000000000000000000000000000000000000000000003";
+
+    DLEQProof dleq{PrivKey(e_hex), PrivKey(s_hex), PrivKey(r_hex)};
+    BlindSignature bs{32, KeysetId("00abcdef01234567"), PubKey(pk_hex), dleq};
+
+    nlohmann::json j = bs;
+    REQUIRE(j.contains("dleq"));
+    REQUIRE(j["dleq"]["e"] == e_hex);
+    REQUIRE(j["dleq"]["s"] == s_hex);
+    REQUIRE(j["dleq"]["r"] == r_hex);
+
+    BlindSignature bs2{0, KeysetId("00abcdef01234567"), PubKey(pk_hex)};
+    from_json(j, bs2);
+    REQUIRE(bs2.amount == 32);
+    REQUIRE(bs2.id == KeysetId("00abcdef01234567"));
+    REQUIRE(bs2.C_.to_hex() == pk_hex);
+    REQUIRE(bs2.dleq.has_value());
+    REQUIRE(bs2.dleq.value().e.to_hex() == e_hex);
+    REQUIRE(bs2.dleq.value().s.to_hex() == s_hex);
+    REQUIRE(bs2.dleq.value().r.to_hex() == r_hex);
 }
