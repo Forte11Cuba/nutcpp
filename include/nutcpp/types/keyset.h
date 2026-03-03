@@ -51,7 +51,12 @@ inline void from_json(const nlohmann::json& j, Keyset& ks) {
     }
     ks.clear();
     for (auto it = j.begin(); it != j.end(); ++it) {
-        uint64_t amount = std::stoull(it.key());
+        uint64_t amount;
+        try {
+            amount = std::stoull(it.key());
+        } catch (...) {
+            throw std::runtime_error("Invalid key amount in JSON: '" + it.key() + "'");
+        }
         std::string hex = it.value().get<std::string>();
         if (hex.size() != 66) {
             throw std::runtime_error("Invalid public key (not compressed?): " + hex);
