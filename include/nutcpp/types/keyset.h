@@ -56,6 +56,9 @@ inline void from_json(const nlohmann::json& j, Keyset& ks) {
         if (hex.size() != 66) {
             throw std::runtime_error("Invalid public key (not compressed?): " + hex);
         }
+        if (hex.substr(0, 2) != "02" && hex.substr(0, 2) != "03") {
+            throw std::runtime_error("Invalid compressed pubkey prefix: " + hex);
+        }
         ks.emplace(amount, PubKey{hex});
     }
 }
