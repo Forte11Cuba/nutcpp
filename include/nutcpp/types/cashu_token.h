@@ -29,9 +29,29 @@ inline void to_json(nlohmann::json& j, const Token& t) {
 inline void from_json(const nlohmann::json& j, Token& t) {
     std::vector<Proof> proofs;
     for (const auto& pj : j.at("proofs")) {
-        Proof p{0, KeysetId("000000000000"), "", PubKey("0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798")};
-        from_json(pj, p);
-        proofs.push_back(p);
+        // Build Proof directly from JSON fields (no default constructor)
+        std::optional<std::string> witness;
+        if (pj.contains("witness") && !pj["witness"].is_null())
+            witness = pj["witness"].get<std::string>();
+
+        std::optional<DLEQProof> dleq;
+        if (pj.contains("dleq") && !pj["dleq"].is_null()) {
+            auto& d = pj["dleq"];
+            dleq = DLEQProof{
+                PrivKey(d.at("e").get<std::string>()),
+                PrivKey(d.at("s").get<std::string>()),
+                PrivKey(d.at("r").get<std::string>())
+            };
+        }
+
+        proofs.push_back(Proof(
+            pj.at("amount").get<uint64_t>(),
+            KeysetId(pj.at("id").get<std::string>()),
+            pj.at("secret").get<std::string>(),
+            PubKey(pj.at("C").get<std::string>()),
+            witness,
+            dleq
+        ));
     }
     t = Token(j.at("mint").get<std::string>(), proofs);
 }
