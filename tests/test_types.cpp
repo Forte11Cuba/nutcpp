@@ -2,6 +2,7 @@
 #include "nutcpp/types/pub_key.h"
 #include "nutcpp/types/priv_key.h"
 #include "nutcpp/types/tag.h"
+#include "nutcpp/types/secret.h"
 
 using namespace nutcpp;
 
@@ -103,4 +104,38 @@ TEST_CASE("Tag JSON roundtrip", "[types]") {
     Tag t2 = j.get<Tag>();
     REQUIRE(t2.key == t.key);
     REQUIRE(t2.values == t.values);
+}
+
+// --- StringSecret tests ---
+
+TEST_CASE("StringSecret stores value", "[types]") {
+    StringSecret s("supersecret");
+    REQUIRE(s.value() == "supersecret");
+}
+
+TEST_CASE("StringSecret get_bytes returns UTF-8", "[types]") {
+    StringSecret s("abc");
+    auto bytes = s.get_bytes();
+    REQUIRE(bytes.size() == 3);
+    REQUIRE(bytes[0] == 'a');
+    REQUIRE(bytes[1] == 'b');
+    REQUIRE(bytes[2] == 'c');
+}
+
+TEST_CASE("StringSecret empty throws", "[types]") {
+    REQUIRE_THROWS_AS(StringSecret(""), std::invalid_argument);
+}
+
+TEST_CASE("StringSecret to_curve throws (not yet implemented)", "[types]") {
+    StringSecret s("test");
+    REQUIRE_THROWS_AS(s.to_curve(), std::runtime_error);
+}
+
+TEST_CASE("StringSecret JSON roundtrip", "[types]") {
+    StringSecret s("my_secret_value");
+    nlohmann::json j = s;
+    REQUIRE(j.get<std::string>() == "my_secret_value");
+
+    StringSecret s2(j.get<std::string>());
+    REQUIRE(s2.value() == s.value());
 }
