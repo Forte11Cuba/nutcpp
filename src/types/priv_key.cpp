@@ -20,10 +20,12 @@ static vector<unsigned char> hex_to_bytes(const string& hex) {
     }
     vector<unsigned char> bytes(hex.size() / 2);
     for (size_t i = 0; i < bytes.size(); i++) {
-        unsigned int byte;
+        unsigned int byte = 0;
         stringstream ss;
         ss << std::hex << hex.substr(i * 2, 2);
-        ss >> byte;
+        if (!(ss >> byte) || byte > 0xFF) {
+            throw invalid_argument("Invalid hex string");
+        }
         bytes[i] = static_cast<unsigned char>(byte);
     }
     return bytes;
@@ -39,6 +41,10 @@ static string bytes_to_hex(const unsigned char* data, size_t len) {
 
 // --- PrivKey ---
 
+PrivKey::~PrivKey() {
+    explicit_bzero(key_, 32);
+}
+
 PrivKey::PrivKey(const string& hex) {
     if (hex.size() != 64) {
         throw invalid_argument("Expected private key (64 hex chars)");
@@ -51,6 +57,9 @@ PrivKey::PrivKey(const string& hex) {
 }
 
 PrivKey::PrivKey(const unsigned char key[32]) {
+    if (!key) {
+        throw invalid_argument("Key pointer must not be null");
+    }
     if (!secp256k1_ec_seckey_verify(get_context(), key)) {
         throw invalid_argument("Invalid private key");
     }

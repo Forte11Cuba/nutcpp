@@ -21,10 +21,12 @@ static vector<unsigned char> hex_to_bytes(const string& hex) {
     }
     vector<unsigned char> bytes(hex.size() / 2);
     for (size_t i = 0; i < bytes.size(); i++) {
-        unsigned int byte;
+        unsigned int byte = 0;
         stringstream ss;
         ss << std::hex << hex.substr(i * 2, 2);
-        ss >> byte;
+        if (!(ss >> byte) || byte > 0xFF) {
+            throw invalid_argument("Invalid hex string");
+        }
         bytes[i] = static_cast<unsigned char>(byte);
     }
     return bytes;

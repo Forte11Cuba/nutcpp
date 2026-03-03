@@ -10,6 +10,8 @@ namespace nutcpp {
 
 class PrivKey {
 public:
+    ~PrivKey();
+
     // Construct from hex string (64 chars = 32 bytes)
     explicit PrivKey(const std::string& hex);
 
