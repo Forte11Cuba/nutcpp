@@ -4,6 +4,7 @@
 #include "nutcpp/types/tag.h"
 #include "nutcpp/types/secret.h"
 #include "nutcpp/types/keyset_id.h"
+#include "nutcpp/types/dleq.h"
 
 using namespace nutcpp;
 
@@ -194,4 +195,41 @@ TEST_CASE("KeysetId JSON roundtrip", "[types]") {
 
     KeysetId kid2(j.get<std::string>());
     REQUIRE(kid == kid2);
+}
+
+// --- DLEQ tests ---
+
+TEST_CASE("DLEQ JSON roundtrip", "[types]") {
+    std::string e_hex = "0000000000000000000000000000000000000000000000000000000000000001";
+    std::string s_hex = "0000000000000000000000000000000000000000000000000000000000000002";
+    DLEQ d{PrivKey(e_hex), PrivKey(s_hex)};
+
+    nlohmann::json j = d;
+    REQUIRE(j["e"].get<std::string>() == e_hex);
+    REQUIRE(j["s"].get<std::string>() == s_hex);
+
+    DLEQ d2(PrivKey(j["e"].get<std::string>()), PrivKey(j["s"].get<std::string>()));
+    REQUIRE(d2.e.to_hex() == e_hex);
+    REQUIRE(d2.s.to_hex() == s_hex);
+}
+
+TEST_CASE("DLEQProof JSON roundtrip", "[types]") {
+    std::string e_hex = "0000000000000000000000000000000000000000000000000000000000000001";
+    std::string s_hex = "0000000000000000000000000000000000000000000000000000000000000002";
+    std::string r_hex = "0000000000000000000000000000000000000000000000000000000000000003";
+    DLEQProof dp{PrivKey(e_hex), PrivKey(s_hex), PrivKey(r_hex)};
+
+    nlohmann::json j = dp;
+    REQUIRE(j["e"].get<std::string>() == e_hex);
+    REQUIRE(j["s"].get<std::string>() == s_hex);
+    REQUIRE(j["r"].get<std::string>() == r_hex);
+
+    DLEQProof dp2(
+        PrivKey(j["e"].get<std::string>()),
+        PrivKey(j["s"].get<std::string>()),
+        PrivKey(j["r"].get<std::string>())
+    );
+    REQUIRE(dp2.e.to_hex() == e_hex);
+    REQUIRE(dp2.s.to_hex() == s_hex);
+    REQUIRE(dp2.r.to_hex() == r_hex);
 }
