@@ -6,15 +6,48 @@
 #include <cstring>
 #include <stdexcept>
 
+#ifdef __linux__
+#include <sys/random.h>
+#elif defined(__APPLE__)
+#include <Security/SecRandom.h>
+#else
+#include <random>
+#endif
+
 using namespace std;
 
 namespace nutcpp {
 namespace crypto {
 
-// Shared secp256k1 context (sign + verify)
-static const secp256k1_context* get_context() {
-    static const secp256k1_context* ctx = secp256k1_context_create(
-        SECP256K1_CONTEXT_SIGN | SECP256K1_CONTEXT_VERIFY);
+// Fill buffer with cryptographically secure random bytes
+static void fill_random(unsigned char* buf, size_t len) {
+#ifdef __linux__
+    ssize_t ret = getrandom(buf, len, 0);
+    if (ret < 0 || static_cast<size_t>(ret) != len)
+        throw runtime_error("getrandom() failed");
+#elif defined(__APPLE__)
+    if (SecRandomCopyBytes(kSecRandomDefault, len, buf) != errSecSuccess)
+        throw runtime_error("SecRandomCopyBytes() failed");
+#else
+    random_device rd;
+    for (size_t i = 0; i < len; ++i)
+        buf[i] = static_cast<unsigned char>(rd());
+#endif
+}
+
+// Shared secp256k1 context (sign + verify), randomized for side-channel protection
+static secp256k1_context* get_context() {
+    static secp256k1_context* ctx = []() {
+        auto c = secp256k1_context_create(SECP256K1_CONTEXT_SIGN | SECP256K1_CONTEXT_VERIFY);
+        if (!c) throw runtime_error("secp256k1_context_create failed");
+        unsigned char seed[32];
+        fill_random(seed, 32);
+        if (!secp256k1_context_randomize(c, seed)) {
+            secp256k1_context_destroy(c);
+            throw runtime_error("secp256k1_context_randomize failed");
+        }
+        return c;
+    }();
     return ctx;
 }
 
