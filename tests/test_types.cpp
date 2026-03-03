@@ -5,6 +5,7 @@
 #include "nutcpp/types/secret.h"
 #include "nutcpp/types/keyset_id.h"
 #include "nutcpp/types/dleq.h"
+#include "nutcpp/types/blinded_message.h"
 
 using namespace nutcpp;
 
@@ -232,4 +233,56 @@ TEST_CASE("DLEQProof JSON roundtrip", "[types]") {
     REQUIRE(dp2.e.to_hex() == e_hex);
     REQUIRE(dp2.s.to_hex() == s_hex);
     REQUIRE(dp2.r.to_hex() == r_hex);
+}
+
+// --- BlindedMessage tests ---
+
+TEST_CASE("BlindedMessage basic construction", "[types]") {
+    std::string pk_hex = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
+    BlindedMessage bm{64, KeysetId("00abcdef01234567"), PubKey(pk_hex)};
+    REQUIRE(bm.amount == 64);
+    REQUIRE(bm.id.to_string() == "00abcdef01234567");
+    REQUIRE(bm.B_.to_hex() == pk_hex);
+    REQUIRE(!bm.witness.has_value());
+}
+
+TEST_CASE("BlindedMessage with witness", "[types]") {
+    std::string pk_hex = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
+    BlindedMessage bm{8, KeysetId("00abcdef01234567"), PubKey(pk_hex), "sig_data"};
+    REQUIRE(bm.witness.has_value());
+    REQUIRE(bm.witness.value() == "sig_data");
+}
+
+TEST_CASE("BlindedMessage JSON roundtrip", "[types]") {
+    std::string pk_hex = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
+    BlindedMessage bm{16, KeysetId("00abcdef01234567"), PubKey(pk_hex)};
+
+    nlohmann::json j = bm;
+    REQUIRE(j["amount"] == 16);
+    REQUIRE(j["id"] == "00abcdef01234567");
+    REQUIRE(j["B_"] == pk_hex);
+    REQUIRE(!j.contains("witness"));
+
+    BlindedMessage bm2{0, KeysetId("00abcdef01234567"), PubKey(pk_hex)};
+    from_json(j, bm2);
+    REQUIRE(bm2.amount == 16);
+    REQUIRE(bm2.id == KeysetId("00abcdef01234567"));
+    REQUIRE(bm2.B_.to_hex() == pk_hex);
+    REQUIRE(!bm2.witness.has_value());
+}
+
+TEST_CASE("BlindedMessage JSON with witness", "[types]") {
+    std::string pk_hex = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
+    BlindedMessage bm{32, KeysetId("00abcdef01234567"), PubKey(pk_hex), "witness_value"};
+
+    nlohmann::json j = bm;
+    REQUIRE(j["witness"] == "witness_value");
+
+    BlindedMessage bm2{0, KeysetId("00abcdef01234567"), PubKey(pk_hex)};
+    from_json(j, bm2);
+    REQUIRE(bm2.amount == 32);
+    REQUIRE(bm2.id == KeysetId("00abcdef01234567"));
+    REQUIRE(bm2.B_.to_hex() == pk_hex);
+    REQUIRE(bm2.witness.has_value());
+    REQUIRE(bm2.witness.value() == "witness_value");
 }
