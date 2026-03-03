@@ -45,17 +45,22 @@ static vector<Proof> map_short_keyset_ids(const vector<Proof>& proofs,
             continue;
         }
 
-        // Find matching full keyset ID that starts with the short ID
+        // Find matching full keyset ID that starts with the short ID.
+        // NUT-00: ambiguous short IDs (>1 match) MUST fail with error.
         auto short_id = proof.id.to_string();
         const KeysetId* match = nullptr;
+        size_t match_count = 0;
         for (auto& kid : keyset_ids) {
             auto full_id = kid.to_string();
             if (full_id.length() >= 16 && full_id.substr(0, 16) == short_id) {
                 match = &kid;
-                break;
+                ++match_count;
             }
         }
 
+        if (match_count > 1)
+            throw runtime_error(
+                "Ambiguous short keyset ID " + short_id + " matched multiple keysets");
         if (!match)
             throw runtime_error(
                 "Couldn't map short keyset ID " + short_id + " to any known keyset");
@@ -123,6 +128,8 @@ CashuToken TokenHelper::decode(const string& token,
         throw invalid_argument("Invalid cashu token");
 
     input = input.substr(CASHU_PREFIX.length());
+    if (input.size() < 2)
+        throw invalid_argument("Invalid cashu token: missing version or payload");
     version = input.substr(0, 1);
     string payload = input.substr(1);
 
