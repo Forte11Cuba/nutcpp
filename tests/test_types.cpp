@@ -345,12 +345,17 @@ TEST_CASE("BlindSignature JSON with DLEQ", "[types]") {
 
 TEST_CASE("BlindSignature JSON with explicit null dleq", "[types]") {
     std::string pk_hex = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
+    std::string e_hex = "0000000000000000000000000000000000000000000000000000000000000001";
+    std::string s_hex = "0000000000000000000000000000000000000000000000000000000000000002";
+    std::string r_hex = "0000000000000000000000000000000000000000000000000000000000000003";
     BlindSignature bs{16, KeysetId("00abcdef01234567"), PubKey(pk_hex)};
 
     nlohmann::json j = bs;
     j["dleq"] = nullptr;
 
-    BlindSignature bs2{0, KeysetId("00abcdef01234567"), PubKey(pk_hex)};
+    // Start with dleq present to verify from_json clears it
+    DLEQProof existing{PrivKey(e_hex), PrivKey(s_hex), PrivKey(r_hex)};
+    BlindSignature bs2{0, KeysetId("00abcdef01234567"), PubKey(pk_hex), existing};
     from_json(j, bs2);
     REQUIRE(bs2.amount == 16);
     REQUIRE(bs2.id == KeysetId("00abcdef01234567"));
