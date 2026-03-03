@@ -266,6 +266,7 @@ TEST_CASE("BlindedMessage JSON roundtrip", "[types]") {
     BlindedMessage bm2{0, KeysetId("00abcdef01234567"), PubKey(pk_hex)};
     from_json(j, bm2);
     REQUIRE(bm2.amount == 16);
+    REQUIRE(bm2.id == KeysetId("00abcdef01234567"));
     REQUIRE(bm2.B_.to_hex() == pk_hex);
     REQUIRE(!bm2.witness.has_value());
 }
@@ -279,6 +280,9 @@ TEST_CASE("BlindedMessage JSON with witness", "[types]") {
 
     BlindedMessage bm2{0, KeysetId("00abcdef01234567"), PubKey(pk_hex)};
     from_json(j, bm2);
+    REQUIRE(bm2.amount == 32);
+    REQUIRE(bm2.id == KeysetId("00abcdef01234567"));
+    REQUIRE(bm2.B_.to_hex() == pk_hex);
     REQUIRE(bm2.witness.has_value());
     REQUIRE(bm2.witness.value() == "witness_value");
 }
