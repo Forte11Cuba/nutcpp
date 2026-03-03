@@ -2,7 +2,6 @@
 
 #include <string>
 #include <vector>
-#include <memory>
 #include <stdexcept>
 #include <nlohmann/json.hpp>
 #include "nutcpp/types/pub_key.h"
