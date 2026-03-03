@@ -1,7 +1,7 @@
 add_executable(nutcpp_tests
     test_types.cpp
     test_keyset.cpp
-    # test_crypto.cpp
+    test_crypto.cpp
 )
 
 target_link_libraries(nutcpp_tests
