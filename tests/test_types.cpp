@@ -7,6 +7,7 @@
 #include "nutcpp/types/dleq.h"
 #include "nutcpp/types/blinded_message.h"
 #include "nutcpp/types/blind_signature.h"
+#include "nutcpp/types/proof.h"
 
 using namespace nutcpp;
 
@@ -361,4 +362,79 @@ TEST_CASE("BlindSignature JSON with explicit null dleq", "[types]") {
     REQUIRE(bs2.id == KeysetId("00abcdef01234567"));
     REQUIRE(bs2.C_.to_hex() == pk_hex);
     REQUIRE(!bs2.dleq.has_value());
+}
+
+// --- Proof tests ---
+
+TEST_CASE("Proof basic construction", "[types]") {
+    std::string pk_hex = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
+    Proof p{64, KeysetId("00abcdef01234567"), "mysecret", PubKey(pk_hex)};
+    REQUIRE(p.amount == 64);
+    REQUIRE(p.id.to_string() == "00abcdef01234567");
+    REQUIRE(p.secret == "mysecret");
+    REQUIRE(p.C.to_hex() == pk_hex);
+    REQUIRE(!p.witness.has_value());
+    REQUIRE(!p.dleq.has_value());
+    REQUIRE(!p.p2pk_e.has_value());
+}
+
+TEST_CASE("Proof JSON roundtrip", "[types]") {
+    std::string pk_hex = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
+    Proof p{16, KeysetId("00abcdef01234567"), "secret123", PubKey(pk_hex)};
+
+    nlohmann::json j = p;
+    REQUIRE(j["amount"] == 16);
+    REQUIRE(j["id"] == "00abcdef01234567");
+    REQUIRE(j["secret"] == "secret123");
+    REQUIRE(j["C"] == pk_hex);
+    REQUIRE(!j.contains("witness"));
+    REQUIRE(!j.contains("dleq"));
+    REQUIRE(!j.contains("p2pk_e"));
+
+    Proof p2{0, KeysetId("00abcdef01234567"), "x", PubKey(pk_hex)};
+    from_json(j, p2);
+    REQUIRE(p2.amount == 16);
+    REQUIRE(p2.id == KeysetId("00abcdef01234567"));
+    REQUIRE(p2.secret == "secret123");
+    REQUIRE(p2.C.to_hex() == pk_hex);
+    REQUIRE(!p2.witness.has_value());
+    REQUIRE(!p2.dleq.has_value());
+}
+
+TEST_CASE("Proof JSON with witness and dleq", "[types]") {
+    std::string pk_hex = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
+    std::string e_hex = "0000000000000000000000000000000000000000000000000000000000000001";
+    std::string s_hex = "0000000000000000000000000000000000000000000000000000000000000002";
+    std::string r_hex = "0000000000000000000000000000000000000000000000000000000000000003";
+
+    DLEQProof dleq{PrivKey(e_hex), PrivKey(s_hex), PrivKey(r_hex)};
+    Proof p{32, KeysetId("00abcdef01234567"), "locked", PubKey(pk_hex),
+            "sig_witness", dleq};
+
+    nlohmann::json j = p;
+    REQUIRE(j["witness"] == "sig_witness");
+    REQUIRE(j.contains("dleq"));
+
+    Proof p2{0, KeysetId("00abcdef01234567"), "x", PubKey(pk_hex)};
+    from_json(j, p2);
+    REQUIRE(p2.amount == 32);
+    REQUIRE(p2.id == KeysetId("00abcdef01234567"));
+    REQUIRE(p2.secret == "locked");
+    REQUIRE(p2.C.to_hex() == pk_hex);
+    REQUIRE(p2.witness.has_value());
+    REQUIRE(p2.witness.value() == "sig_witness");
+    REQUIRE(p2.dleq.has_value());
+    REQUIRE(p2.dleq.value().e.to_hex() == e_hex);
+    REQUIRE(p2.dleq.value().s.to_hex() == s_hex);
+    REQUIRE(p2.dleq.value().r.to_hex() == r_hex);
+}
+
+TEST_CASE("Proof p2pk_e not serialized", "[types]") {
+    std::string pk_hex = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
+    Proof p{8, KeysetId("00abcdef01234567"), "sec", PubKey(pk_hex),
+            std::nullopt, std::nullopt, PubKey(pk_hex)};
+    REQUIRE(p.p2pk_e.has_value());
+
+    nlohmann::json j = p;
+    REQUIRE(!j.contains("p2pk_e"));
 }
