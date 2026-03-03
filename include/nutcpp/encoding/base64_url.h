@@ -79,9 +79,22 @@ public:
             0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF, 0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,
         };
 
+        const size_t input_len = input.size();
+
         // Strip padding
-        size_t len = input.size();
+        size_t len = input_len;
         while (len > 0 && input[len - 1] == '=') --len;
+
+        // Validate padding
+        const size_t pad_len = input_len - len;
+        if (pad_len > 2)
+            throw std::invalid_argument("Invalid base64url padding length");
+        if (pad_len > 0 && (input_len % 4 != 0))
+            throw std::invalid_argument("Invalid padded base64url length");
+
+        // len % 4 == 1 is structurally impossible (6 bits < 8 bits)
+        if ((len % 4) == 1)
+            throw std::invalid_argument("Invalid base64url length");
 
         std::vector<unsigned char> result;
         result.reserve(len * 3 / 4);
@@ -103,6 +116,10 @@ public:
                 result.push_back(static_cast<unsigned char>((buf >> bits) & 0xFF));
             }
         }
+
+        // Reject non-canonical trailing bits (must be zero)
+        if (bits > 0 && (buf & ((1u << bits) - 1u)) != 0u)
+            throw std::invalid_argument("Invalid base64url trailing bits");
 
         return result;
     }

@@ -143,3 +143,23 @@ TEST_CASE("Base64Url decode invalid character throws", "[encoding]") {
     REQUIRE_THROWS_AS(Base64Url::decode("abc@def"), std::invalid_argument);
     REQUIRE_THROWS_AS(Base64Url::decode("abc def"), std::invalid_argument);
 }
+
+TEST_CASE("Base64Url decode invalid length throws", "[encoding]") {
+    // len % 4 == 1 after stripping padding is structurally impossible
+    REQUIRE_THROWS_AS(Base64Url::decode("A"), std::invalid_argument);
+    REQUIRE_THROWS_AS(Base64Url::decode("ABCDE"), std::invalid_argument);
+}
+
+TEST_CASE("Base64Url decode excess padding throws", "[encoding]") {
+    REQUIRE_THROWS_AS(Base64Url::decode("Zg==="), std::invalid_argument);
+}
+
+TEST_CASE("Base64Url decode misaligned padding throws", "[encoding]") {
+    // Padding present but total length not multiple of 4
+    REQUIRE_THROWS_AS(Base64Url::decode("Zg="), std::invalid_argument);
+}
+
+TEST_CASE("Base64Url decode non-canonical trailing bits throws", "[encoding]") {
+    // "Zh" decodes to 12 bits: 011001|100001, trailing 4 bits are 0001 (non-zero)
+    REQUIRE_THROWS_AS(Base64Url::decode("Zh"), std::invalid_argument);
+}
