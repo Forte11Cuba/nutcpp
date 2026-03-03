@@ -213,35 +213,41 @@ pair<PrivKey, PrivKey> compute_proof(const PubKey& B_, const PrivKey& a, const P
 }
 
 bool verify_proof(const PubKey& B_, const PubKey& C_, const PrivKey& e, const PrivKey& s, const PubKey& A) {
-    // R1 = sG - eA = sG + (-(eA))
-    auto sG = scalar_to_point(s.data());
-    auto eA = scalar_mult(A.get(), e.data());
-    auto neg_eA = point_negate(eA);
-    auto R1 = point_add(sG, neg_eA);
+    try {
+        // R1 = sG - eA = sG + (-(eA))
+        auto sG = scalar_to_point(s.data());
+        auto eA = scalar_mult(A.get(), e.data());
+        auto neg_eA = point_negate(eA);
+        auto R1 = point_add(sG, neg_eA);
 
-    // R2 = sB_ - eC_ = sB_ + (-(eC_))
-    auto sB_ = scalar_mult(B_.get(), s.data());
-    auto eC_ = scalar_mult(C_.get(), e.data());
-    auto neg_eC_ = point_negate(eC_);
-    auto R2 = point_add(sB_, neg_eC_);
+        // R2 = sB_ - eC_ = sB_ + (-(eC_))
+        auto sB_ = scalar_mult(B_.get(), s.data());
+        auto eC_ = scalar_mult(C_.get(), e.data());
+        auto neg_eC_ = point_negate(eC_);
+        auto R2 = point_add(sB_, neg_eC_);
 
-    // e' = hash(R1, R2, A, C_)
-    PrivKey e_computed = compute_e(PubKey{R1}, PubKey{R2}, A, C_);
-
-    // Check e == e'
-    return memcmp(e.data(), e_computed.data(), 32) == 0;
+        // e' = hash(R1, R2, A, C_)
+        PrivKey e_computed = compute_e(PubKey{R1}, PubKey{R2}, A, C_);
+        return memcmp(e.data(), e_computed.data(), 32) == 0;
+    } catch (const std::exception&) {
+        return false;
+    }
 }
 
 bool verify_proof(const PubKey& Y, const PrivKey& r, const PubKey& C, const PrivKey& e, const PrivKey& s, const PubKey& A) {
-    // Reconstruct C_ = C + rA
-    auto rA = scalar_mult(A.get(), r.data());
-    auto C_ = point_add(C.get(), rA);
+    try {
+        // Reconstruct C_ = C + rA
+        auto rA = scalar_mult(A.get(), r.data());
+        auto C_ = point_add(C.get(), rA);
 
-    // Reconstruct B_ = Y + rG
-    auto rG = scalar_to_point(r.data());
-    auto B_ = point_add(Y.get(), rG);
+        // Reconstruct B_ = Y + rG
+        auto rG = scalar_to_point(r.data());
+        auto B_ = point_add(Y.get(), rG);
 
-    return verify_proof(PubKey{B_}, PubKey{C_}, e, s, A);
+        return verify_proof(PubKey{B_}, PubKey{C_}, e, s, A);
+    } catch (const std::exception&) {
+        return false;
+    }
 }
 
 } // namespace crypto
