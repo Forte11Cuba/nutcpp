@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include "nutcpp/types/pub_key.h"
 #include "nutcpp/types/priv_key.h"
+#include "nutcpp/types/tag.h"
 
 using namespace nutcpp;
 
@@ -57,4 +58,49 @@ TEST_CASE("PrivKey JSON roundtrip", "[types]") {
     REQUIRE(j.get<std::string>() == hex);
     PrivKey sk2(j.get<std::string>());
     REQUIRE(sk.to_hex() == sk2.to_hex());
+}
+
+// --- Tag tests ---
+
+TEST_CASE("Tag from key and values", "[types]") {
+    Tag t("sigflag", {"SIG_ALL"});
+    REQUIRE(t.key == "sigflag");
+    REQUIRE(t.values.size() == 1);
+    REQUIRE(t.values[0] == "SIG_ALL");
+}
+
+TEST_CASE("Tag from flat array", "[types]") {
+    Tag t(std::vector<std::string>{"pubkeys", "pk1", "pk2"});
+    REQUIRE(t.key == "pubkeys");
+    REQUIRE(t.values.size() == 2);
+    REQUIRE(t.values[0] == "pk1");
+    REQUIRE(t.values[1] == "pk2");
+}
+
+TEST_CASE("Tag to_array roundtrip", "[types]") {
+    std::vector<std::string> arr = {"locktime", "1000"};
+    Tag t(arr);
+    REQUIRE(t.to_array() == arr);
+}
+
+TEST_CASE("Tag empty array throws", "[types]") {
+    REQUIRE_THROWS_AS(Tag(std::vector<std::string>{}), std::invalid_argument);
+}
+
+TEST_CASE("Tag key only (no values)", "[types]") {
+    Tag t(std::vector<std::string>{"refund"});
+    REQUIRE(t.key == "refund");
+    REQUIRE(t.values.empty());
+}
+
+TEST_CASE("Tag JSON roundtrip", "[types]") {
+    Tag t("sigflag", {"SIG_INPUTS"});
+    nlohmann::json j = t;
+    REQUIRE(j.is_array());
+    REQUIRE(j[0] == "sigflag");
+    REQUIRE(j[1] == "SIG_INPUTS");
+
+    Tag t2 = j.get<Tag>();
+    REQUIRE(t2.key == t.key);
+    REQUIRE(t2.values == t.values);
 }
