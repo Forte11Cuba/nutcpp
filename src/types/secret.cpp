@@ -1,4 +1,5 @@
 #include "nutcpp/types/secret.h"
+#include "nutcpp/crypto/cashu.h"
 
 using namespace std;
 
@@ -16,8 +17,7 @@ vector<unsigned char> StringSecret::get_bytes() const {
 }
 
 PubKey StringSecret::to_curve() const {
-    // TODO: implement when crypto/cashu.h (HashToCurve) is available
-    throw runtime_error("to_curve() not yet implemented — needs crypto/cashu.h");
+    return crypto::message_to_curve(secret_);
 }
 
 // --- JSON ---

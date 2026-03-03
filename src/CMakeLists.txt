@@ -4,7 +4,7 @@ add_library(nutcpp
     types/secret.cpp
     types/keyset_id.cpp
     types/keyset.cpp
-    # crypto/cashu.cpp
+    crypto/cashu.cpp
 )
 
 target_include_directories(nutcpp

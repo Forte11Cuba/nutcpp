@@ -132,9 +132,12 @@ TEST_CASE("StringSecret empty throws", "[types]") {
     REQUIRE_THROWS_AS(StringSecret(""), std::invalid_argument);
 }
 
-TEST_CASE("StringSecret to_curve throws (not yet implemented)", "[types]") {
+TEST_CASE("StringSecret to_curve returns valid point", "[types]") {
     StringSecret s("test");
-    REQUIRE_THROWS_AS(s.to_curve(), std::runtime_error);
+    PubKey pk = s.to_curve();
+    auto hex = pk.to_hex();
+    REQUIRE(hex.size() == 66);
+    REQUIRE((hex.substr(0, 2) == "02" || hex.substr(0, 2) == "03"));
 }
 
 TEST_CASE("StringSecret JSON roundtrip", "[types]") {
