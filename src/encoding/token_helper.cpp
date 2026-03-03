@@ -49,16 +49,21 @@ static vector<Proof> map_short_keyset_ids(const vector<Proof>& proofs,
         // NUT-00: ambiguous short IDs (>1 match) MUST fail with error.
         auto short_id = proof.id.to_string();
         const KeysetId* match = nullptr;
-        size_t match_count = 0;
+        string matched_full_id;
+        bool ambiguous = false;
         for (auto& kid : keyset_ids) {
             auto full_id = kid.to_string();
             if (full_id.length() >= 16 && full_id.substr(0, 16) == short_id) {
-                match = &kid;
-                ++match_count;
+                if (!match) {
+                    match = &kid;
+                    matched_full_id = full_id;
+                } else if (full_id != matched_full_id) {
+                    ambiguous = true;
+                }
             }
         }
 
-        if (match_count > 1)
+        if (ambiguous)
             throw runtime_error(
                 "Ambiguous short keyset ID " + short_id + " matched multiple keysets");
         if (!match)
