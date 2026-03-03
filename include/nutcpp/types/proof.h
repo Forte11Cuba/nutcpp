@@ -20,7 +20,7 @@ struct Proof {
     PubKey C;
     std::optional<std::string> witness;
     std::optional<DLEQProof> dleq;
-    std::optional<PubKey> p2pk_e;  // ephemeral key for P2BK, not sent to mint
+    std::optional<PubKey> p2pk_e;  // NUT-28 P2BK: ephemeral pubkey E, not sent to mint
 
     Proof(uint64_t amount, const KeysetId& id, const std::string& secret,
           const PubKey& C,
