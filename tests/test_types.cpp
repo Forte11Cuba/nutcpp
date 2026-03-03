@@ -54,7 +54,7 @@ TEST_CASE("PubKey JSON roundtrip", "[types]") {
     PubKey pk(hex);
     nlohmann::json j = pk;
     REQUIRE(j.get<std::string>() == hex);
-    PubKey pk2(j.get<std::string>());
+    PubKey pk2 = j.get<PubKey>();
     REQUIRE(pk == pk2);
 }
 
@@ -63,7 +63,7 @@ TEST_CASE("PrivKey JSON roundtrip", "[types]") {
     PrivKey sk(hex);
     nlohmann::json j = sk;
     REQUIRE(j.get<std::string>() == hex);
-    PrivKey sk2(j.get<std::string>());
+    PrivKey sk2 = j.get<PrivKey>();
     REQUIRE(sk.to_hex() == sk2.to_hex());
 }
 
@@ -145,7 +145,7 @@ TEST_CASE("StringSecret JSON roundtrip", "[types]") {
     nlohmann::json j = s;
     REQUIRE(j.get<std::string>() == "my_secret_value");
 
-    StringSecret s2(j.get<std::string>());
+    StringSecret s2 = j.get<StringSecret>();
     REQUIRE(s2.value() == s.value());
 }
 
@@ -200,7 +200,7 @@ TEST_CASE("KeysetId JSON roundtrip", "[types]") {
     nlohmann::json j = kid;
     REQUIRE(j.get<std::string>() == "00abcdef01234567");
 
-    KeysetId kid2(j.get<std::string>());
+    KeysetId kid2 = j.get<KeysetId>();
     REQUIRE(kid == kid2);
 }
 
@@ -215,7 +215,7 @@ TEST_CASE("DLEQ JSON roundtrip", "[types]") {
     REQUIRE(j["e"].get<std::string>() == e_hex);
     REQUIRE(j["s"].get<std::string>() == s_hex);
 
-    DLEQ d2(PrivKey(j["e"].get<std::string>()), PrivKey(j["s"].get<std::string>()));
+    DLEQ d2 = j.get<DLEQ>();
     REQUIRE(d2.e.to_hex() == e_hex);
     REQUIRE(d2.s.to_hex() == s_hex);
 }
@@ -231,11 +231,7 @@ TEST_CASE("DLEQProof JSON roundtrip", "[types]") {
     REQUIRE(j["s"].get<std::string>() == s_hex);
     REQUIRE(j["r"].get<std::string>() == r_hex);
 
-    DLEQProof dp2(
-        PrivKey(j["e"].get<std::string>()),
-        PrivKey(j["s"].get<std::string>()),
-        PrivKey(j["r"].get<std::string>())
-    );
+    DLEQProof dp2 = j.get<DLEQProof>();
     REQUIRE(dp2.e.to_hex() == e_hex);
     REQUIRE(dp2.s.to_hex() == s_hex);
     REQUIRE(dp2.r.to_hex() == r_hex);
@@ -269,8 +265,7 @@ TEST_CASE("BlindedMessage JSON roundtrip", "[types]") {
     REQUIRE(j["B_"] == pk_hex);
     REQUIRE(!j.contains("witness"));
 
-    BlindedMessage bm2{0, KeysetId("00abcdef01234567"), PubKey(pk_hex)};
-    from_json(j, bm2);
+    BlindedMessage bm2 = j.get<BlindedMessage>();
     REQUIRE(bm2.amount == 16);
     REQUIRE(bm2.id == KeysetId("00abcdef01234567"));
     REQUIRE(bm2.B_.to_hex() == pk_hex);
@@ -284,8 +279,7 @@ TEST_CASE("BlindedMessage JSON with witness", "[types]") {
     nlohmann::json j = bm;
     REQUIRE(j["witness"] == "witness_value");
 
-    BlindedMessage bm2{0, KeysetId("00abcdef01234567"), PubKey(pk_hex)};
-    from_json(j, bm2);
+    BlindedMessage bm2 = j.get<BlindedMessage>();
     REQUIRE(bm2.amount == 32);
     REQUIRE(bm2.id == KeysetId("00abcdef01234567"));
     REQUIRE(bm2.B_.to_hex() == pk_hex);
@@ -314,8 +308,7 @@ TEST_CASE("BlindSignature JSON roundtrip", "[types]") {
     REQUIRE(j["C_"] == pk_hex);
     REQUIRE(!j.contains("dleq"));
 
-    BlindSignature bs2{0, KeysetId("00abcdef01234567"), PubKey(pk_hex)};
-    from_json(j, bs2);
+    BlindSignature bs2 = j.get<BlindSignature>();
     REQUIRE(bs2.amount == 16);
     REQUIRE(bs2.id == KeysetId("00abcdef01234567"));
     REQUIRE(bs2.C_.to_hex() == pk_hex);
@@ -337,8 +330,7 @@ TEST_CASE("BlindSignature JSON with DLEQ", "[types]") {
     REQUIRE(j["dleq"]["s"] == s_hex);
     REQUIRE(j["dleq"]["r"] == r_hex);
 
-    BlindSignature bs2{0, KeysetId("00abcdef01234567"), PubKey(pk_hex)};
-    from_json(j, bs2);
+    BlindSignature bs2 = j.get<BlindSignature>();
     REQUIRE(bs2.amount == 32);
     REQUIRE(bs2.id == KeysetId("00abcdef01234567"));
     REQUIRE(bs2.C_.to_hex() == pk_hex);
@@ -350,18 +342,12 @@ TEST_CASE("BlindSignature JSON with DLEQ", "[types]") {
 
 TEST_CASE("BlindSignature JSON with explicit null dleq", "[types]") {
     std::string pk_hex = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
-    std::string e_hex = "0000000000000000000000000000000000000000000000000000000000000001";
-    std::string s_hex = "0000000000000000000000000000000000000000000000000000000000000002";
-    std::string r_hex = "0000000000000000000000000000000000000000000000000000000000000003";
     BlindSignature bs{16, KeysetId("00abcdef01234567"), PubKey(pk_hex)};
 
     nlohmann::json j = bs;
     j["dleq"] = nullptr;
 
-    // Start with dleq present to verify from_json clears it
-    DLEQProof existing{PrivKey(e_hex), PrivKey(s_hex), PrivKey(r_hex)};
-    BlindSignature bs2{0, KeysetId("00abcdef01234567"), PubKey(pk_hex), existing};
-    from_json(j, bs2);
+    BlindSignature bs2 = j.get<BlindSignature>();
     REQUIRE(bs2.amount == 16);
     REQUIRE(bs2.id == KeysetId("00abcdef01234567"));
     REQUIRE(bs2.C_.to_hex() == pk_hex);
@@ -395,8 +381,7 @@ TEST_CASE("Proof JSON roundtrip", "[types]") {
     REQUIRE(!j.contains("dleq"));
     REQUIRE(!j.contains("p2pk_e"));
 
-    Proof p2{0, KeysetId("00abcdef01234567"), "x", PubKey(pk_hex)};
-    from_json(j, p2);
+    Proof p2 = j.get<Proof>();
     REQUIRE(p2.amount == 16);
     REQUIRE(p2.id == KeysetId("00abcdef01234567"));
     REQUIRE(p2.secret == "secret123");
@@ -419,8 +404,7 @@ TEST_CASE("Proof JSON with witness and dleq", "[types]") {
     REQUIRE(j["witness"] == "sig_witness");
     REQUIRE(j.contains("dleq"));
 
-    Proof p2{0, KeysetId("00abcdef01234567"), "x", PubKey(pk_hex)};
-    from_json(j, p2);
+    Proof p2 = j.get<Proof>();
     REQUIRE(p2.amount == 32);
     REQUIRE(p2.id == KeysetId("00abcdef01234567"));
     REQUIRE(p2.secret == "locked");
@@ -470,8 +454,7 @@ TEST_CASE("CashuToken JSON roundtrip", "[types]") {
     REQUIRE(j["unit"] == "sat");
     REQUIRE(j["memo"] == "hello");
 
-    CashuToken ct2{{}, std::nullopt, std::nullopt};
-    from_json(j, ct2);
+    CashuToken ct2 = j.get<CashuToken>();
     REQUIRE(ct2.tokens.size() == 1);
     REQUIRE(ct2.tokens[0].mint == "https://mint.example.com");
     REQUIRE(ct2.tokens[0].proofs.size() == 2);
@@ -495,8 +478,7 @@ TEST_CASE("CashuToken JSON without optional fields", "[types]") {
     REQUIRE(!j.contains("unit"));
     REQUIRE(!j.contains("memo"));
 
-    CashuToken ct2{{}, std::nullopt, std::nullopt};
-    from_json(j, ct2);
+    CashuToken ct2 = j.get<CashuToken>();
     REQUIRE(ct2.tokens.size() == 1);
     REQUIRE(!ct2.unit.has_value());
     REQUIRE(!ct2.memo.has_value());
@@ -515,8 +497,7 @@ TEST_CASE("CashuToken multiple mints", "[types]") {
     REQUIRE(j["token"][0]["mint"] == "https://mint1.com");
     REQUIRE(j["token"][1]["mint"] == "https://mint2.com");
 
-    CashuToken ct2{{}, std::nullopt, std::nullopt};
-    from_json(j, ct2);
+    CashuToken ct2 = j.get<CashuToken>();
     REQUIRE(ct2.tokens.size() == 2);
     REQUIRE(ct2.tokens[0].mint == "https://mint1.com");
     REQUIRE(ct2.tokens[0].proofs[0].amount == 16);

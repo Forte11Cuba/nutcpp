@@ -33,8 +33,12 @@ private:
     std::string id_;
 };
 
-// JSON: serializes as hex string
-void to_json(nlohmann::json& j, const KeysetId& kid);
-void from_json(const nlohmann::json& j, KeysetId& kid);
-
 } // namespace nutcpp
+
+namespace nlohmann {
+template <>
+struct adl_serializer<nutcpp::KeysetId> {
+    static void to_json(json& j, const nutcpp::KeysetId& kid) { j = kid.to_string(); }
+    static nutcpp::KeysetId from_json(const json& j) { return nutcpp::KeysetId(j.get<std::string>()); }
+};
+} // namespace nlohmann

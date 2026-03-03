@@ -41,14 +41,4 @@ bool KeysetId::operator<(const KeysetId& other) const {
     return to_lower(id_) < to_lower(other.id_);
 }
 
-// --- JSON ---
-
-void to_json(nlohmann::json& j, const KeysetId& kid) {
-    j = kid.to_string();
-}
-
-void from_json(const nlohmann::json& j, KeysetId& kid) {
-    kid = KeysetId(j.get<string>());
-}
-
 } // namespace nutcpp
