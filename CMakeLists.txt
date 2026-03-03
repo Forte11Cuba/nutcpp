@@ -40,9 +40,9 @@ FetchContent_MakeAvailable(Catch2)
 # Library
 add_subdirectory(src)
 
-# Tests (enable when first test file is created)
-# enable_testing()
-# add_subdirectory(tests)
+# Tests
+enable_testing()
+add_subdirectory(tests)
 
 # add_subdirectory(demo)
 

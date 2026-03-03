@@ -1,6 +1,6 @@
 add_library(nutcpp
     types/pub_key.cpp
-    # types/priv_key.cpp
+    types/priv_key.cpp
     # crypto/cashu.cpp
 )
 

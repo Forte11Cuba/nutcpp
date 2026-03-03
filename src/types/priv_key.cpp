@@ -1,5 +1,5 @@
-#include "nutcpp/types/pub_key.h"
-#include <algorithm>
+#include "nutcpp/types/priv_key.h"
+#include <cstring>
 #include <sstream>
 #include <iomanip>
 
@@ -7,7 +7,6 @@ using namespace std;
 
 namespace nutcpp {
 
-// TODO: move to a shared context when more files need it
 static const secp256k1_context* get_context() {
     static secp256k1_context* ctx = secp256k1_context_create(SECP256K1_CONTEXT_NONE);
     return ctx;
@@ -38,39 +37,46 @@ static string bytes_to_hex(const unsigned char* data, size_t len) {
     return oss.str();
 }
 
-// --- PubKey ---
+// --- PrivKey ---
 
-PubKey::PubKey(const string& hex) {
-    if (hex.size() != 66) {
-        throw invalid_argument("Expected compressed public key (66 hex chars)");
+PrivKey::PrivKey(const string& hex) {
+    if (hex.size() != 64) {
+        throw invalid_argument("Expected private key (64 hex chars)");
     }
     auto bytes = hex_to_bytes(hex);
-    if (!secp256k1_ec_pubkey_parse(get_context(), &key_, bytes.data(), bytes.size())) {
-        throw invalid_argument("Invalid public key");
+    if (!secp256k1_ec_seckey_verify(get_context(), bytes.data())) {
+        throw invalid_argument("Invalid private key");
     }
+    memcpy(key_, bytes.data(), 32);
 }
 
-PubKey::PubKey(const secp256k1_pubkey& key) : key_(key) {}
-
-string PubKey::to_hex() const {
-    unsigned char buf[33];
-    size_t len = 33;
-    secp256k1_ec_pubkey_serialize(get_context(), buf, &len, &key_, SECP256K1_EC_COMPRESSED);
-    return bytes_to_hex(buf, len);
+PrivKey::PrivKey(const unsigned char key[32]) {
+    if (!secp256k1_ec_seckey_verify(get_context(), key)) {
+        throw invalid_argument("Invalid private key");
+    }
+    memcpy(key_, key, 32);
 }
 
-bool PubKey::operator==(const PubKey& other) const {
-    return secp256k1_ec_pubkey_cmp(get_context(), &key_, &other.key_) == 0;
+string PrivKey::to_hex() const {
+    return bytes_to_hex(key_, 32);
+}
+
+PubKey PrivKey::get_pub_key() const {
+    secp256k1_pubkey pubkey;
+    if (!secp256k1_ec_pubkey_create(get_context(), &pubkey, key_)) {
+        throw runtime_error("Failed to derive public key");
+    }
+    return PubKey(pubkey);
 }
 
 // --- JSON ---
 
-void to_json(nlohmann::json& j, const PubKey& pk) {
-    j = pk.to_hex();
+void to_json(nlohmann::json& j, const PrivKey& sk) {
+    j = sk.to_hex();
 }
 
-void from_json(const nlohmann::json& j, PubKey& pk) {
-    pk = PubKey(j.get<string>());
+void from_json(const nlohmann::json& j, PrivKey& sk) {
+    sk = PrivKey(j.get<string>());
 }
 
 } // namespace nutcpp
