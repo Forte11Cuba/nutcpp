@@ -31,8 +31,12 @@ private:
     unsigned char key_[32];
 };
 
-// JSON: serializes as hex string
-void to_json(nlohmann::json& j, const PrivKey& sk);
-void from_json(const nlohmann::json& j, PrivKey& sk);
-
 } // namespace nutcpp
+
+namespace nlohmann {
+template <>
+struct adl_serializer<nutcpp::PrivKey> {
+    static void to_json(json& j, const nutcpp::PrivKey& sk) { j = sk.to_hex(); }
+    static nutcpp::PrivKey from_json(const json& j) { return nutcpp::PrivKey(j.get<std::string>()); }
+};
+} // namespace nlohmann

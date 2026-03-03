@@ -21,27 +21,31 @@ struct BlindedMessage {
         : amount(amount), id(id), B_(B_), witness(witness) {}
 };
 
-inline void to_json(nlohmann::json& j, const BlindedMessage& bm) {
-    j = {
-        {"amount", bm.amount},
-        {"id", bm.id},
-        {"B_", bm.B_}
-    };
-    if (bm.witness.has_value())
-        j["witness"] = bm.witness.value();
-}
-
-inline void from_json(const nlohmann::json& j, BlindedMessage& bm) {
-    std::optional<std::string> witness;
-    if (j.contains("witness") && !j["witness"].is_null())
-        witness = j["witness"].get<std::string>();
-
-    bm = BlindedMessage(
-        j.at("amount").get<uint64_t>(),
-        KeysetId(j.at("id").get<std::string>()),
-        PubKey(j.at("B_").get<std::string>()),
-        witness
-    );
-}
-
 } // namespace nutcpp
+
+namespace nlohmann {
+template <>
+struct adl_serializer<nutcpp::BlindedMessage> {
+    static void to_json(json& j, const nutcpp::BlindedMessage& bm) {
+        j = {
+            {"amount", bm.amount},
+            {"id", bm.id},
+            {"B_", bm.B_}
+        };
+        if (bm.witness.has_value())
+            j["witness"] = bm.witness.value();
+    }
+    static nutcpp::BlindedMessage from_json(const json& j) {
+        std::optional<std::string> witness;
+        if (j.contains("witness") && !j["witness"].is_null())
+            witness = j["witness"].get<std::string>();
+
+        return nutcpp::BlindedMessage(
+            j.at("amount").get<uint64_t>(),
+            j.at("id").get<nutcpp::KeysetId>(),
+            j.at("B_").get<nutcpp::PubKey>(),
+            witness
+        );
+    }
+};
+} // namespace nlohmann

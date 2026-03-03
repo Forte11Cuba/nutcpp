@@ -34,9 +34,12 @@ private:
     std::string secret_;
 };
 
-// JSON: StringSecret serializes as plain string.
-// Nut10Secret dispatch will be added in Fase 5.
-void to_json(nlohmann::json& j, const StringSecret& s);
-void from_json(const nlohmann::json& j, StringSecret& s);
-
 } // namespace nutcpp
+
+namespace nlohmann {
+template <>
+struct adl_serializer<nutcpp::StringSecret> {
+    static void to_json(json& j, const nutcpp::StringSecret& s) { j = s.value(); }
+    static nutcpp::StringSecret from_json(const json& j) { return nutcpp::StringSecret(j.get<std::string>()); }
+};
+} // namespace nlohmann

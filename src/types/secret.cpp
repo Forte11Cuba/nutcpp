@@ -20,14 +20,4 @@ PubKey StringSecret::to_curve() const {
     return crypto::message_to_curve(secret_);
 }
 
-// --- JSON ---
-
-void to_json(nlohmann::json& j, const StringSecret& s) {
-    j = s.value();
-}
-
-void from_json(const nlohmann::json& j, StringSecret& s) {
-    s = StringSecret(j.get<string>());
-}
-
 } // namespace nutcpp

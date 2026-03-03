@@ -50,14 +50,4 @@ PubKey PrivKey::get_pub_key() const {
     return PubKey(pubkey);
 }
 
-// --- JSON ---
-
-void to_json(nlohmann::json& j, const PrivKey& sk) {
-    j = sk.to_hex();
-}
-
-void from_json(const nlohmann::json& j, PrivKey& sk) {
-    sk = PrivKey(j.get<string>());
-}
-
 } // namespace nutcpp

@@ -35,14 +35,4 @@ bool PubKey::operator==(const PubKey& other) const {
     return secp256k1_ec_pubkey_cmp(get_context(), &key_, &other.key_) == 0;
 }
 
-// --- JSON ---
-
-void to_json(nlohmann::json& j, const PubKey& pk) {
-    j = pk.to_hex();
-}
-
-void from_json(const nlohmann::json& j, PubKey& pk) {
-    pk = PubKey(j.get<string>());
-}
-
 } // namespace nutcpp

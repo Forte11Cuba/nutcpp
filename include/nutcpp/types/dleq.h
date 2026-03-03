@@ -14,17 +14,6 @@ struct DLEQ {
     DLEQ(const PrivKey& e, const PrivKey& s) : e(e), s(s) {}
 };
 
-inline void to_json(nlohmann::json& j, const DLEQ& d) {
-    j = {{"e", d.e}, {"s", d.s}};
-}
-
-inline void from_json(const nlohmann::json& j, DLEQ& d) {
-    d = DLEQ(
-        PrivKey(j.at("e").get<std::string>()),
-        PrivKey(j.at("s").get<std::string>())
-    );
-}
-
 // Extended DLEQ with blinding factor r (used by wallet for offline verification)
 struct DLEQProof {
     PrivKey e;
@@ -35,16 +24,30 @@ struct DLEQProof {
         : e(e), s(s), r(r) {}
 };
 
-inline void to_json(nlohmann::json& j, const DLEQProof& d) {
-    j = {{"e", d.e}, {"s", d.s}, {"r", d.r}};
-}
-
-inline void from_json(const nlohmann::json& j, DLEQProof& d) {
-    d = DLEQProof(
-        PrivKey(j.at("e").get<std::string>()),
-        PrivKey(j.at("s").get<std::string>()),
-        PrivKey(j.at("r").get<std::string>())
-    );
-}
-
 } // namespace nutcpp
+
+namespace nlohmann {
+template <>
+struct adl_serializer<nutcpp::DLEQ> {
+    static void to_json(json& j, const nutcpp::DLEQ& d) {
+        j = {{"e", d.e}, {"s", d.s}};
+    }
+    static nutcpp::DLEQ from_json(const json& j) {
+        return nutcpp::DLEQ(j.at("e").get<nutcpp::PrivKey>(), j.at("s").get<nutcpp::PrivKey>());
+    }
+};
+
+template <>
+struct adl_serializer<nutcpp::DLEQProof> {
+    static void to_json(json& j, const nutcpp::DLEQProof& d) {
+        j = {{"e", d.e}, {"s", d.s}, {"r", d.r}};
+    }
+    static nutcpp::DLEQProof from_json(const json& j) {
+        return nutcpp::DLEQProof(
+            j.at("e").get<nutcpp::PrivKey>(),
+            j.at("s").get<nutcpp::PrivKey>(),
+            j.at("r").get<nutcpp::PrivKey>()
+        );
+    }
+};
+} // namespace nlohmann

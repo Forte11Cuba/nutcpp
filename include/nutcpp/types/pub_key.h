@@ -30,8 +30,12 @@ private:
     secp256k1_pubkey key_;
 };
 
-// JSON: serializes as hex string
-void to_json(nlohmann::json& j, const PubKey& pk);
-void from_json(const nlohmann::json& j, PubKey& pk);
-
 } // namespace nutcpp
+
+namespace nlohmann {
+template <>
+struct adl_serializer<nutcpp::PubKey> {
+    static void to_json(json& j, const nutcpp::PubKey& pk) { j = pk.to_hex(); }
+    static nutcpp::PubKey from_json(const json& j) { return nutcpp::PubKey(j.get<std::string>()); }
+};
+} // namespace nlohmann

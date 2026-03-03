@@ -31,43 +31,41 @@ struct Proof {
           witness(witness), dleq(dleq), p2pk_e(p2pk_e) {}
 };
 
-inline void to_json(nlohmann::json& j, const Proof& p) {
-    j = {
-        {"amount", p.amount},
-        {"id", p.id},
-        {"secret", p.secret},
-        {"C", p.C}
-    };
-    if (p.witness.has_value())
-        j["witness"] = p.witness.value();
-    if (p.dleq.has_value())
-        j["dleq"] = p.dleq.value();
-    // p2pk_e is wallet-internal, never serialized to mint
-}
-
-inline void from_json(const nlohmann::json& j, Proof& p) {
-    std::optional<std::string> witness;
-    if (j.contains("witness") && !j["witness"].is_null())
-        witness = j["witness"].get<std::string>();
-
-    std::optional<DLEQProof> dleq;
-    if (j.contains("dleq") && !j["dleq"].is_null()) {
-        auto& d = j["dleq"];
-        dleq = DLEQProof{
-            PrivKey(d.at("e").get<std::string>()),
-            PrivKey(d.at("s").get<std::string>()),
-            PrivKey(d.at("r").get<std::string>())
-        };
-    }
-
-    p = Proof(
-        j.at("amount").get<uint64_t>(),
-        KeysetId(j.at("id").get<std::string>()),
-        j.at("secret").get<std::string>(),
-        PubKey(j.at("C").get<std::string>()),
-        witness,
-        dleq
-    );
-}
-
 } // namespace nutcpp
+
+namespace nlohmann {
+template <>
+struct adl_serializer<nutcpp::Proof> {
+    static void to_json(json& j, const nutcpp::Proof& p) {
+        j = {
+            {"amount", p.amount},
+            {"id", p.id},
+            {"secret", p.secret},
+            {"C", p.C}
+        };
+        if (p.witness.has_value())
+            j["witness"] = p.witness.value();
+        if (p.dleq.has_value())
+            j["dleq"] = p.dleq.value();
+        // p2pk_e is wallet-internal, never serialized to mint
+    }
+    static nutcpp::Proof from_json(const json& j) {
+        std::optional<std::string> witness;
+        if (j.contains("witness") && !j["witness"].is_null())
+            witness = j["witness"].get<std::string>();
+
+        std::optional<nutcpp::DLEQProof> dleq;
+        if (j.contains("dleq") && !j["dleq"].is_null())
+            dleq = j["dleq"].get<nutcpp::DLEQProof>();
+
+        return nutcpp::Proof(
+            j.at("amount").get<uint64_t>(),
+            j.at("id").get<nutcpp::KeysetId>(),
+            j.at("secret").get<std::string>(),
+            j.at("C").get<nutcpp::PubKey>(),
+            witness,
+            dleq
+        );
+    }
+};
+} // namespace nlohmann
