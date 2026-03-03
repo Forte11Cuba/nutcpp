@@ -1,7 +1,6 @@
 #include "nutcpp/types/priv_key.h"
+#include "nutcpp/encoding/convert_utils.h"
 #include <cstring>
-#include <sstream>
-#include <iomanip>
 
 using namespace std;
 
@@ -10,34 +9,6 @@ namespace nutcpp {
 static const secp256k1_context* get_context() {
     static secp256k1_context* ctx = secp256k1_context_create(SECP256K1_CONTEXT_NONE);
     return ctx;
-}
-
-// Hex helpers (will move to convert_utils.h later)
-
-static vector<unsigned char> hex_to_bytes(const string& hex) {
-    if (hex.size() % 2 != 0) {
-        throw invalid_argument("Hex string must have even length");
-    }
-    vector<unsigned char> bytes(hex.size() / 2);
-    for (size_t i = 0; i < bytes.size(); i++) {
-        unsigned int byte = 0;
-        stringstream ss;
-        ss << hex.substr(i * 2, 2);
-        ss >> std::hex >> byte;
-        if (ss.fail() || !ss.eof() || byte > 0xFF) {
-            throw invalid_argument("Invalid hex string");
-        }
-        bytes[i] = static_cast<unsigned char>(byte);
-    }
-    return bytes;
-}
-
-static string bytes_to_hex(const unsigned char* data, size_t len) {
-    ostringstream oss;
-    for (size_t i = 0; i < len; i++) {
-        oss << std::hex << setfill('0') << setw(2) << static_cast<int>(data[i]);
-    }
-    return oss.str();
 }
 
 // --- PrivKey ---
