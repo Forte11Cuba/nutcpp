@@ -8,6 +8,7 @@
 #include "nutcpp/types/blinded_message.h"
 #include "nutcpp/types/blind_signature.h"
 #include "nutcpp/types/proof.h"
+#include "nutcpp/types/cashu_token.h"
 
 using namespace nutcpp;
 
@@ -437,4 +438,85 @@ TEST_CASE("Proof p2pk_e not serialized", "[types]") {
 
     nlohmann::json j = p;
     REQUIRE(!j.contains("p2pk_e"));
+}
+
+// --- CashuToken tests ---
+
+TEST_CASE("Token basic construction", "[types]") {
+    std::string pk_hex = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
+    Proof p{64, KeysetId("00abcdef01234567"), "sec1", PubKey(pk_hex)};
+    Token t{"https://mint.example.com", {p}};
+    REQUIRE(t.mint == "https://mint.example.com");
+    REQUIRE(t.proofs.size() == 1);
+    REQUIRE(t.proofs[0].amount == 64);
+}
+
+TEST_CASE("CashuToken JSON roundtrip", "[types]") {
+    std::string pk_hex = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
+    Proof p1{16, KeysetId("00abcdef01234567"), "sec1", PubKey(pk_hex)};
+    Proof p2{32, KeysetId("00abcdef01234567"), "sec2", PubKey(pk_hex)};
+    Token t{"https://mint.example.com", {p1, p2}};
+    CashuToken ct{{t}, "sat", "hello"};
+
+    nlohmann::json j = ct;
+    REQUIRE(j["token"].size() == 1);
+    REQUIRE(j["token"][0]["mint"] == "https://mint.example.com");
+    REQUIRE(j["token"][0]["proofs"].size() == 2);
+    REQUIRE(j["token"][0]["proofs"][0]["amount"] == 16);
+    REQUIRE(j["token"][0]["proofs"][1]["amount"] == 32);
+    REQUIRE(j["unit"] == "sat");
+    REQUIRE(j["memo"] == "hello");
+
+    CashuToken ct2{{}, std::nullopt, std::nullopt};
+    from_json(j, ct2);
+    REQUIRE(ct2.tokens.size() == 1);
+    REQUIRE(ct2.tokens[0].mint == "https://mint.example.com");
+    REQUIRE(ct2.tokens[0].proofs.size() == 2);
+    REQUIRE(ct2.tokens[0].proofs[0].amount == 16);
+    REQUIRE(ct2.tokens[0].proofs[0].secret == "sec1");
+    REQUIRE(ct2.tokens[0].proofs[1].amount == 32);
+    REQUIRE(ct2.tokens[0].proofs[1].secret == "sec2");
+    REQUIRE(ct2.unit.has_value());
+    REQUIRE(ct2.unit.value() == "sat");
+    REQUIRE(ct2.memo.has_value());
+    REQUIRE(ct2.memo.value() == "hello");
+}
+
+TEST_CASE("CashuToken JSON without optional fields", "[types]") {
+    std::string pk_hex = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
+    Proof p{8, KeysetId("00abcdef01234567"), "sec", PubKey(pk_hex)};
+    Token t{"https://mint.example.com", {p}};
+    CashuToken ct{{t}};
+
+    nlohmann::json j = ct;
+    REQUIRE(!j.contains("unit"));
+    REQUIRE(!j.contains("memo"));
+
+    CashuToken ct2{{}, std::nullopt, std::nullopt};
+    from_json(j, ct2);
+    REQUIRE(ct2.tokens.size() == 1);
+    REQUIRE(!ct2.unit.has_value());
+    REQUIRE(!ct2.memo.has_value());
+}
+
+TEST_CASE("CashuToken multiple mints", "[types]") {
+    std::string pk_hex = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
+    Proof p1{16, KeysetId("00abcdef01234567"), "sec1", PubKey(pk_hex)};
+    Proof p2{32, KeysetId("00abcdef01234567"), "sec2", PubKey(pk_hex)};
+    Token t1{"https://mint1.com", {p1}};
+    Token t2{"https://mint2.com", {p2}};
+    CashuToken ct{{t1, t2}, "sat"};
+
+    nlohmann::json j = ct;
+    REQUIRE(j["token"].size() == 2);
+    REQUIRE(j["token"][0]["mint"] == "https://mint1.com");
+    REQUIRE(j["token"][1]["mint"] == "https://mint2.com");
+
+    CashuToken ct2{{}, std::nullopt, std::nullopt};
+    from_json(j, ct2);
+    REQUIRE(ct2.tokens.size() == 2);
+    REQUIRE(ct2.tokens[0].mint == "https://mint1.com");
+    REQUIRE(ct2.tokens[0].proofs[0].amount == 16);
+    REQUIRE(ct2.tokens[1].mint == "https://mint2.com");
+    REQUIRE(ct2.tokens[1].proofs[0].amount == 32);
 }
