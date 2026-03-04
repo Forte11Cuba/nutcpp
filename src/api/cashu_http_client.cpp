@@ -40,8 +40,12 @@ static nlohmann::json handle_response(const httplib::Result& result) {
 
     // HTTP 400 → CashuProtocolError from the mint.
     if (res.status == 400) {
-        auto err = nlohmann::json::parse(res.body).get<CashuProtocolError>();
-        throw CashuProtocolException(err);
+        try {
+            auto err = nlohmann::json::parse(res.body).get<CashuProtocolError>();
+            throw CashuProtocolException(err);
+        } catch (const nlohmann::json::exception&) {
+            throw runtime_error("HTTP 400 with non-Cashu error payload: " + res.body);
+        }
     }
 
     // Any other non-2xx status.
@@ -49,7 +53,11 @@ static nlohmann::json handle_response(const httplib::Result& result) {
         throw runtime_error("HTTP " + to_string(res.status) + ": " + res.body);
     }
 
-    return nlohmann::json::parse(res.body);
+    try {
+        return nlohmann::json::parse(res.body);
+    } catch (const nlohmann::json::exception& e) {
+        throw runtime_error("Invalid JSON in HTTP " + to_string(res.status) + " response: " + string(e.what()));
+    }
 }
 
 // ======================================================================
