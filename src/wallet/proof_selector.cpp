@@ -127,7 +127,7 @@ SendResponse ProofSelector::select_proofs_to_send(
 
     for (const auto& p : proofs) {
         uint64_t ppk = get_proof_fee_ppk(p);
-        double ex = include_fees ? p.amount - std::ceil(ppk / 1000.0) : p.amount;
+        double ex = include_fees ? p.amount - ppk / 1000.0 : p.amount;
         proof_with_fees.push_back({&p, ex, ppk});
 
         if (!include_fees || ex > 0) {
@@ -224,13 +224,13 @@ SendResponse ProofSelector::select_proofs_to_send(
 
         // PHASE 2: Local Improvement
         // Build "others" — spendable proofs not in S
-        std::set<PubKey> selected_cs;
+        std::set<const Proof*> selected_ptrs;
         for (const auto& pwf : S)
-            selected_cs.insert(pwf.proof->C);
+            selected_ptrs.insert(pwf.proof);
 
         std::vector<ProofWithFee> others;
         for (const auto& obj : spendable) {
-            if (selected_cs.find(obj.proof->C) == selected_cs.end())
+            if (selected_ptrs.find(obj.proof) == selected_ptrs.end())
                 others.push_back(obj);
         }
 
@@ -328,16 +328,16 @@ SendResponse ProofSelector::select_proofs_to_send(
     // ── Build result ────────────────────────────────────────────
 
     if (best_subset && !std::isinf(best_delta)) {
-        std::set<PubKey> send_cs;
+        std::set<const Proof*> send_ptrs;
         std::vector<Proof> send;
         for (const auto& pwf : *best_subset) {
-            send_cs.insert(pwf.proof->C);
+            send_ptrs.insert(pwf.proof);
             send.push_back(*pwf.proof);
         }
 
         std::vector<Proof> keep;
         for (const auto& p : proofs) {
-            if (send_cs.find(p.C) == send_cs.end())
+            if (send_ptrs.find(&p) == send_ptrs.end())
                 keep.push_back(p);
         }
 
