@@ -11,7 +11,7 @@ uint64_t compute_fee(const std::vector<Proof>& proofs,
             sum += it->second;
         }
     }
-    return (sum + 999) / 1000;
+    return sum == 0 ? 0 : 1 + (sum - 1) / 1000;
 }
 
 } // namespace nutcpp::wallet
