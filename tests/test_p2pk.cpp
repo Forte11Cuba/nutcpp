@@ -2,7 +2,9 @@
 #include <nlohmann/json.hpp>
 #include "nutcpp/nuts/nut10_secret.h"
 #include "nutcpp/nuts/p2pk.h"
+#include "nutcpp/nuts/htlc.h"
 #include "nutcpp/types/secret.h"
+#include "nutcpp/encoding/convert_utils.h"
 
 using namespace nutcpp;
 using json = nlohmann::json;
@@ -601,4 +603,158 @@ TEST_CASE("p2pk: generate_witness single key", "[p2pk]") {
     P2PKWitness bad_witness;
     bad_witness.signatures = {"deadbeef"};
     REQUIRE_FALSE(ps.verify_witness(nut10_secret, bad_witness));
+}
+
+// ============================================================
+// NUT-14: HTLC tests
+// ============================================================
+
+TEST_CASE("htlc: parse_secret creates HTLCProofSecret for HTLC key", "[htlc]") {
+    // DotNut Nut14Tests_HTLCSecret vector
+    std::string s = "[\"HTLC\",{\"nonce\":\"da62796403af76c80cd6ce9153ed3746\",\"data\":\"023192200a0cfd3867e48eb63b03ff599c7e46c8f4e41146b2d281173ca6c50c\",\"tags\":[[\"pubkeys\",\"02698c4e2b5f9534cd0687d87513c759790cf829aa5739184a3e3735471fbda904\"],[\"locktime\",\"1689418329\"],[\"refund\",\"033281c37677ea273eb7183b783067f5244933ef78d8c3f15b1a77cb246099c26e\"]]}]";
+    auto secret = parse_secret(s);
+    auto* nut10 = dynamic_cast<Nut10Secret*>(secret.get());
+    REQUIRE(nut10 != nullptr);
+    REQUIRE(nut10->key() == "HTLC");
+    auto* htlc_ps = dynamic_cast<HTLCProofSecret*>(nut10->proof_secret().get());
+    REQUIRE(htlc_ps != nullptr);
+}
+
+TEST_CASE("htlc: get_allowed_pubkeys from DotNut vector", "[htlc]") {
+    std::string s = "[\"HTLC\",{\"nonce\":\"da62796403af76c80cd6ce9153ed3746\",\"data\":\"023192200a0cfd3867e48eb63b03ff599c7e46c8f4e41146b2d281173ca6c50c\",\"tags\":[[\"pubkeys\",\"02698c4e2b5f9534cd0687d87513c759790cf829aa5739184a3e3735471fbda904\"],[\"locktime\",\"1689418329\"],[\"refund\",\"033281c37677ea273eb7183b783067f5244933ef78d8c3f15b1a77cb246099c26e\"]]}]";
+    auto secret = parse_secret(s);
+    auto* nut10 = dynamic_cast<Nut10Secret*>(secret.get());
+    REQUIRE(nut10 != nullptr);
+    auto* htlc_ps = dynamic_cast<HTLCProofSecret*>(nut10->proof_secret().get());
+    REQUIRE(htlc_ps != nullptr);
+
+    int req_sigs = 0;
+    auto pubkeys = htlc_ps->get_allowed_pubkeys(req_sigs);
+    REQUIRE(pubkeys.size() == 1);
+    REQUIRE(req_sigs == 1);
+    REQUIRE(pubkeys[0].to_hex() == "02698c4e2b5f9534cd0687d87513c759790cf829aa5739184a3e3735471fbda904");
+}
+
+TEST_CASE("htlc: HTLCBuilder build and load roundtrip (DotNut vector)", "[htlc]") {
+    // Parse the DotNut vector
+    std::string s = "[\"HTLC\",{\"nonce\":\"da62796403af76c80cd6ce9153ed3746\",\"data\":\"023192200a0cfd3867e48eb63b03ff599c7e46c8f4e41146b2d281173ca6c50c\",\"tags\":[[\"pubkeys\",\"02698c4e2b5f9534cd0687d87513c759790cf829aa5739184a3e3735471fbda904\"],[\"locktime\",\"1689418329\"],[\"refund\",\"033281c37677ea273eb7183b783067f5244933ef78d8c3f15b1a77cb246099c26e\"]]}]";
+    auto secret = parse_secret(s);
+    auto* nut10 = dynamic_cast<Nut10Secret*>(secret.get());
+    REQUIRE(nut10 != nullptr);
+    auto* htlc_ps = dynamic_cast<HTLCProofSecret*>(nut10->proof_secret().get());
+    REQUIRE(htlc_ps != nullptr);
+
+    // Load into builder
+    auto builder = HTLCBuilder::load(*htlc_ps);
+    REQUIRE(builder.hashlock == "023192200a0cfd3867e48eb63b03ff599c7e46c8f4e41146b2d281173ca6c50c");
+    REQUIRE(builder.pubkeys.size() == 1);
+    REQUIRE(builder.pubkeys[0].to_hex() == "02698c4e2b5f9534cd0687d87513c759790cf829aa5739184a3e3735471fbda904");
+    REQUIRE(builder.lock.value() == 1689418329);
+    REQUIRE(builder.refund_pubkeys.size() == 1);
+    REQUIRE(builder.refund_pubkeys[0].to_hex() == "033281c37677ea273eb7183b783067f5244933ef78d8c3f15b1a77cb246099c26e");
+
+    // Rebuild and compare
+    auto rebuilt = builder.build();
+    auto rebuilt_ptr = std::make_shared<HTLCProofSecret>(rebuilt);
+    Nut10Secret rebuilt_secret(HTLCProofSecret::KEY, rebuilt_ptr);
+    auto original_bytes = secret->get_bytes();
+    auto rebuilt_bytes = rebuilt_secret.get_bytes();
+
+    // Parse both to compare structure (nonce differs so compare fields)
+    REQUIRE(rebuilt.data == htlc_ps->data);
+    REQUIRE(rebuilt.nonce == htlc_ps->nonce);
+}
+
+TEST_CASE("htlc: verify_preimage valid", "[htlc]") {
+    std::string preimage_hex = "0000000000000000000000000000000000000000000000000000000000000001";
+    // SHA256(bytes[0x00..0x01]) = ec4916dd...
+    std::string hashlock = "ec4916dd28fc4c10d78e287ca5d9cc51ee1ae73cbfde08c6b37324cbfaac8bc5";
+
+    HTLCProofSecret ps;
+    ps.data = hashlock;
+    REQUIRE(ps.verify_preimage(preimage_hex));
+}
+
+TEST_CASE("htlc: verify_preimage invalid", "[htlc]") {
+    HTLCProofSecret ps;
+    ps.data = "ec4916dd28fc4c10d78e287ca5d9cc51ee1ae73cbfde08c6b37324cbfaac8bc5";
+    REQUIRE_FALSE(ps.verify_preimage("deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"));
+}
+
+TEST_CASE("htlc: generate_witness and verify roundtrip", "[htlc]") {
+    PrivKey sk("0000000000000000000000000000000000000000000000000000000000000001");
+    std::string preimage_hex = "0000000000000000000000000000000000000000000000000000000000000001";
+    std::string hashlock = "ec4916dd28fc4c10d78e287ca5d9cc51ee1ae73cbfde08c6b37324cbfaac8bc5";
+
+    // Build HTLC secret
+    HTLCBuilder builder;
+    builder.hashlock = hashlock;
+    builder.pubkeys = {sk.get_pub_key()};
+    builder.nonce = "htlc_test_nonce";
+
+    auto ps = builder.build();
+    auto secret_ptr = std::make_shared<HTLCProofSecret>(ps);
+    Nut10Secret nut10_secret(HTLCProofSecret::KEY, secret_ptr);
+
+    auto msg = nut10_secret.get_bytes();
+    auto witness_opt = ps.generate_witness(msg, {sk}, preimage_hex);
+    REQUIRE(witness_opt.has_value());
+    REQUIRE(witness_opt->preimage.value() == preimage_hex);
+    REQUIRE(witness_opt->signatures.size() == 1);
+
+    // Verify
+    REQUIRE(ps.verify_witness(nut10_secret, witness_opt.value()));
+}
+
+TEST_CASE("htlc: verify rejects P2PKWitness without preimage", "[htlc]") {
+    PrivKey sk("0000000000000000000000000000000000000000000000000000000000000001");
+    std::string preimage_hex = "0000000000000000000000000000000000000000000000000000000000000001";
+    std::string hashlock = "ec4916dd28fc4c10d78e287ca5d9cc51ee1ae73cbfde08c6b37324cbfaac8bc5";
+
+    HTLCBuilder builder;
+    builder.hashlock = hashlock;
+    builder.pubkeys = {sk.get_pub_key()};
+    builder.nonce = "htlc_reject_test";
+
+    auto ps = builder.build();
+    auto secret_ptr = std::make_shared<HTLCProofSecret>(ps);
+    Nut10Secret nut10_secret(HTLCProofSecret::KEY, secret_ptr);
+
+    // A P2PKWitness (not HTLCWitness) should be rejected
+    P2PKWitness p2pk_witness;
+    p2pk_witness.signatures = {"deadbeef"};
+    REQUIRE_FALSE(ps.verify_witness(nut10_secret, p2pk_witness));
+}
+
+TEST_CASE("htlc: HTLCWitness JSON roundtrip", "[htlc]") {
+    HTLCWitness w;
+    w.preimage = "abcdef1234567890";
+    w.signatures = {"sig1hex", "sig2hex"};
+
+    json j;
+    to_json(j, w);
+    REQUIRE(j.contains("preimage"));
+    REQUIRE(j["preimage"] == "abcdef1234567890");
+    REQUIRE(j["signatures"].size() == 2);
+
+    HTLCWitness w2;
+    from_json(j, w2);
+    REQUIRE(w2.preimage.value() == "abcdef1234567890");
+    REQUIRE(w2.signatures.size() == 2);
+}
+
+TEST_CASE("htlc: HTLCWitness JSON without preimage", "[htlc]") {
+    std::string witness_json = "{\"signatures\":[\"sig1\"]}";
+    auto j = json::parse(witness_json);
+    HTLCWitness w;
+    from_json(j, w);
+    REQUIRE_FALSE(w.preimage.has_value());
+    REQUIRE(w.signatures.size() == 1);
+}
+
+TEST_CASE("htlc: HTLCBuilder validate rejects bad hashlock", "[htlc]") {
+    HTLCBuilder builder;
+    builder.hashlock = "tooshort";
+    builder.pubkeys = {PubKey("0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798")};
+    REQUIRE_THROWS_AS(builder.build(), std::invalid_argument);
 }

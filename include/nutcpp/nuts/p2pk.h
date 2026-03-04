@@ -69,12 +69,12 @@ public:
     P2PKProofSecret() = default;
 
     // Get allowed pubkeys for spending (normal path). Always available.
-    std::vector<PubKey> get_allowed_pubkeys(int& required_sigs) const;
+    virtual std::vector<PubKey> get_allowed_pubkeys(int& required_sigs) const;
 
     // Get allowed pubkeys for refund path.
     // Returns empty + nullopt if locktime not expired.
     // Returns empty + 0 if locktime expired and no refund keys (freely spendable).
-    std::vector<PubKey> get_allowed_refund_pubkeys(std::optional<int>& required_sigs) const;
+    virtual std::vector<PubKey> get_allowed_refund_pubkeys(std::optional<int>& required_sigs) const;
 
     // Generate witness: SHA256(msg) then sign with matching private keys
     std::optional<P2PKWitness> generate_witness(

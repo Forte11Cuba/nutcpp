@@ -1,5 +1,6 @@
 #include "nutcpp/nuts/nut10_secret.h"
 #include "nutcpp/nuts/p2pk.h"
+#include "nutcpp/nuts/htlc.h"
 #include "nutcpp/crypto/cashu.h"
 
 #include <nlohmann/json.hpp>
@@ -110,8 +111,7 @@ unique_ptr<ISecret> parse_secret(const string& s) {
                 return make_unique<Nut10Secret>(key, ps, s);
             }
             if (key == "HTLC") {
-                // TODO: dispatch to HTLCProofSecret in PR 3
-                auto ps = make_shared<Nut10ProofSecret>();
+                auto ps = make_shared<HTLCProofSecret>();
                 from_json(j[1], *ps);
                 return make_unique<Nut10Secret>(key, ps, s);
             }
