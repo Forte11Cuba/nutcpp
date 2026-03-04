@@ -480,7 +480,9 @@ TEST_CASE("p2pk: post-locktime refund path valid (DotNut New_P2PkRules)", "[p2pk
     std::string secret_str = j["secret"].get<std::string>();
     auto secret = parse_secret(secret_str);
     auto* nut10 = dynamic_cast<Nut10Secret*>(secret.get());
+    REQUIRE(nut10 != nullptr);
     auto* p2pk_ps = dynamic_cast<P2PKProofSecret*>(nut10->proof_secret().get());
+    REQUIRE(p2pk_ps != nullptr);
 
     // Refund path witness with 1 sig (n_sigs_refund defaults to 1)
     std::string witness_json = "{\"signatures\":[\"d39631363480adf30433ee25c7cec28237e02b4808d4143469d4f390d4eae6ec97d18ba3cc6494ab1d04372f0838426ea296f25cb4bd8bddb296adc292eeaa96\"]}";
