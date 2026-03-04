@@ -4,6 +4,7 @@
 #include <vector>
 #include <optional>
 #include <cstdint>
+#include <utility>
 #include <nlohmann/json.hpp>
 #include "nutcpp/types/proof.h"
 #include "nutcpp/types/blinded_message.h"

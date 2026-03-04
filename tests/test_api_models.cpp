@@ -5,6 +5,9 @@
 #include "nutcpp/api_models/swap_models.h"
 #include "nutcpp/api_models/mint_models.h"
 #include "nutcpp/api_models/melt_models.h"
+#include "nutcpp/api_models/check_state_models.h"
+#include "nutcpp/api_models/restore_models.h"
+#include "nutcpp/api_models/info_response.h"
 
 using namespace nutcpp;
 using namespace nutcpp::api;
@@ -710,4 +713,322 @@ TEST_CASE("PostMeltBolt11Request with NUT-08 change outputs", "[api][nut05]") {
     nlohmann::json j2 = req;
     REQUIRE(j2.contains("outputs"));
     CHECK(j2["outputs"].size() == 1);
+}
+
+// ============================================================
+// GetInfoResponse tests (NUT-06)
+// ============================================================
+
+// NUT-06 spec example
+static const char* NUT06_INFO_JSON = R"json({
+    "name": "Bob's Cashu mint",
+    "pubkey": "0283bf290884eed3a7ca2663fc0260de2e2064d6b355ea13f98dec004b7a7ead99",
+    "version": "Nutshell/0.15.0",
+    "description": "The short mint description",
+    "description_long": "A description that can be a long piece of text.",
+    "contact": [
+        {"method": "email", "info": "contact@me.com"},
+        {"method": "twitter", "info": "@me"}
+    ],
+    "motd": "Message to display to users.",
+    "icon_url": "https://mint.host/icon.jpg",
+    "urls": ["https://mint.host", "http://mint.onion"],
+    "time": 1725304480,
+    "tos_url": "https://mint.host/tos",
+    "nuts": {
+        "4": {
+            "methods": [{"method": "bolt11", "unit": "sat", "min_amount": 0, "max_amount": 10000}],
+            "disabled": false
+        },
+        "5": {
+            "methods": [{"method": "bolt11", "unit": "sat", "min_amount": 100, "max_amount": 10000}],
+            "disabled": false
+        },
+        "7": {"supported": true},
+        "8": {"supported": true},
+        "9": {"supported": true}
+    }
+})json";
+
+TEST_CASE("GetInfoResponse decode NUT-06 spec example", "[api][nut06]") {
+    auto j = nlohmann::json::parse(NUT06_INFO_JSON);
+    auto info = j.get<GetInfoResponse>();
+
+    REQUIRE(info.name.has_value());
+    CHECK(info.name.value() == "Bob's Cashu mint");
+    REQUIRE(info.pubkey.has_value());
+    CHECK(info.pubkey.value() == "0283bf290884eed3a7ca2663fc0260de2e2064d6b355ea13f98dec004b7a7ead99");
+    REQUIRE(info.version.has_value());
+    CHECK(info.version.value() == "Nutshell/0.15.0");
+    REQUIRE(info.description.has_value());
+    CHECK(info.description.value() == "The short mint description");
+    REQUIRE(info.description_long.has_value());
+    REQUIRE(info.contact.has_value());
+    CHECK(info.contact.value().size() == 2);
+    CHECK(info.contact.value()[0].method == "email");
+    CHECK(info.contact.value()[1].info == "@me");
+    REQUIRE(info.motd.has_value());
+    CHECK(info.motd.value() == "Message to display to users.");
+    REQUIRE(info.icon_url.has_value());
+    REQUIRE(info.urls.has_value());
+    CHECK(info.urls.value().size() == 2);
+    REQUIRE(info.time.has_value());
+    CHECK(info.time.value() == 1725304480);
+    REQUIRE(info.tos_url.has_value());
+    REQUIRE(info.nuts.has_value());
+    CHECK(info.nuts.value().size() == 5);
+    CHECK(info.nuts.value().count("4") == 1);
+    CHECK(info.nuts.value().count("7") == 1);
+}
+
+TEST_CASE("GetInfoResponse JSON roundtrip", "[api][nut06]") {
+    auto j = nlohmann::json::parse(NUT06_INFO_JSON);
+    auto info = j.get<GetInfoResponse>();
+
+    nlohmann::json j2 = info;
+    auto info2 = j2.get<GetInfoResponse>();
+
+    CHECK(info2.name.value() == "Bob's Cashu mint");
+    CHECK(info2.contact.value().size() == 2);
+    CHECK(info2.nuts.value().size() == 5);
+    CHECK(info2.time.value() == 1725304480);
+}
+
+TEST_CASE("GetInfoResponse minimal (all fields absent)", "[api][nut06]") {
+    auto j = nlohmann::json::parse("{}");
+    auto info = j.get<GetInfoResponse>();
+
+    CHECK_FALSE(info.name.has_value());
+    CHECK_FALSE(info.pubkey.has_value());
+    CHECK_FALSE(info.version.has_value());
+    CHECK_FALSE(info.description.has_value());
+    CHECK_FALSE(info.contact.has_value());
+    CHECK_FALSE(info.motd.has_value());
+    CHECK_FALSE(info.nuts.has_value());
+    CHECK_FALSE(info.time.has_value());
+}
+
+TEST_CASE("GetInfoResponse serialization omits absent optionals", "[api][nut06]") {
+    GetInfoResponse info;
+    info.name = "Test mint";
+
+    nlohmann::json j = info;
+    CHECK(j.contains("name"));
+    CHECK_FALSE(j.contains("pubkey"));
+    CHECK_FALSE(j.contains("version"));
+    CHECK_FALSE(j.contains("description"));
+    CHECK_FALSE(j.contains("contact"));
+    CHECK_FALSE(j.contains("motd"));
+    CHECK_FALSE(j.contains("nuts"));
+    CHECK_FALSE(j.contains("time"));
+    CHECK_FALSE(j.contains("urls"));
+}
+
+TEST_CASE("GetInfoResponse nuts field can be parsed for method settings", "[api][nut06]") {
+    auto j = nlohmann::json::parse(NUT06_INFO_JSON);
+    auto info = j.get<GetInfoResponse>();
+
+    REQUIRE(info.nuts.has_value());
+    auto& nut4 = info.nuts.value().at("4");
+    auto methods = nut4["methods"].get<std::vector<MethodSetting>>();
+    REQUIRE(methods.size() == 1);
+    CHECK(methods[0].method == "bolt11");
+    CHECK(methods[0].unit == "sat");
+    REQUIRE(methods[0].min_amount.has_value());
+    CHECK(methods[0].min_amount.value() == 0);
+    REQUIRE(methods[0].max_amount.has_value());
+    CHECK(methods[0].max_amount.value() == 10000);
+}
+
+TEST_CASE("ContactInfo JSON roundtrip", "[api][nut06]") {
+    ContactInfo c("nostr", "npub1abc...");
+    nlohmann::json j = c;
+    CHECK(j["method"] == "nostr");
+    CHECK(j["info"] == "npub1abc...");
+
+    auto c2 = j.get<ContactInfo>();
+    CHECK(c2.method == "nostr");
+    CHECK(c2.info == "npub1abc...");
+}
+
+TEST_CASE("MethodSetting with optional fields absent", "[api][nut06]") {
+    auto j = nlohmann::json::parse(R"json({"method": "bolt11", "unit": "sat"})json");
+    auto s = j.get<MethodSetting>();
+
+    CHECK(s.method == "bolt11");
+    CHECK(s.unit == "sat");
+    CHECK_FALSE(s.min_amount.has_value());
+    CHECK_FALSE(s.max_amount.has_value());
+    CHECK_FALSE(s.options.has_value());
+}
+
+TEST_CASE("MethodSetting serialization omits absent optionals", "[api][nut06]") {
+    MethodSetting s("bolt11", "sat");
+    nlohmann::json j = s;
+
+    CHECK(j.contains("method"));
+    CHECK(j.contains("unit"));
+    CHECK_FALSE(j.contains("min_amount"));
+    CHECK_FALSE(j.contains("max_amount"));
+    CHECK_FALSE(j.contains("options"));
+}
+
+// ============================================================
+// PostCheckState tests (NUT-07)
+// ============================================================
+
+// NUT-07 spec example
+TEST_CASE("PostCheckStateRequest JSON roundtrip", "[api][nut07]") {
+    PostCheckStateRequest req({"02599b9ea0a1ad4143706c2a5a4a568ce442dd4313e1cf1f7f0b58a317c1a355ee"});
+
+    nlohmann::json j = req;
+    REQUIRE(j["Ys"].size() == 1);
+    CHECK(j["Ys"][0] == "02599b9ea0a1ad4143706c2a5a4a568ce442dd4313e1cf1f7f0b58a317c1a355ee");
+
+    auto req2 = j.get<PostCheckStateRequest>();
+    CHECK(req2.Ys.size() == 1);
+}
+
+TEST_CASE("PostCheckStateResponse decode NUT-07 spec example", "[api][nut07]") {
+    auto j = nlohmann::json::parse(R"json({
+        "states": [{
+            "Y": "02599b9ea0a1ad4143706c2a5a4a568ce442dd4313e1cf1f7f0b58a317c1a355ee",
+            "state": "SPENT",
+            "witness": "{\"signatures\": [\"b2cf120a...\"]}"
+        }]
+    })json");
+
+    auto resp = j.get<PostCheckStateResponse>();
+    REQUIRE(resp.states.size() == 1);
+    CHECK(resp.states[0].Y == "02599b9ea0a1ad4143706c2a5a4a568ce442dd4313e1cf1f7f0b58a317c1a355ee");
+    CHECK(resp.states[0].state == "SPENT");
+    REQUIRE(resp.states[0].witness.has_value());
+}
+
+TEST_CASE("StateResponseItem without witness", "[api][nut07]") {
+    auto j = nlohmann::json::parse(R"json({
+        "Y": "02abc...",
+        "state": "UNSPENT"
+    })json");
+
+    auto item = j.get<StateResponseItem>();
+    CHECK(item.state == "UNSPENT");
+    CHECK_FALSE(item.witness.has_value());
+}
+
+TEST_CASE("StateResponseItem with null witness", "[api][nut07]") {
+    auto j = nlohmann::json::parse(R"json({
+        "Y": "02abc...",
+        "state": "PENDING",
+        "witness": null
+    })json");
+
+    auto item = j.get<StateResponseItem>();
+    CHECK(item.state == "PENDING");
+    CHECK_FALSE(item.witness.has_value());
+}
+
+TEST_CASE("StateResponseItem serialization omits absent witness", "[api][nut07]") {
+    StateResponseItem item("02abc...", "UNSPENT");
+    nlohmann::json j = item;
+
+    CHECK(j.contains("Y"));
+    CHECK(j.contains("state"));
+    CHECK_FALSE(j.contains("witness"));
+}
+
+TEST_CASE("StateResponseItem rejects invalid state", "[api][nut07]") {
+    auto j = nlohmann::json::parse(R"json({
+        "Y": "02abc...",
+        "state": "INVALID"
+    })json");
+
+    CHECK_THROWS_AS(j.get<StateResponseItem>(), std::invalid_argument);
+}
+
+TEST_CASE("PostCheckStateResponse multiple states", "[api][nut07]") {
+    auto j = nlohmann::json::parse(R"json({
+        "states": [
+            {"Y": "02aaa...", "state": "UNSPENT"},
+            {"Y": "02bbb...", "state": "SPENT"},
+            {"Y": "02ccc...", "state": "PENDING"}
+        ]
+    })json");
+
+    auto resp = j.get<PostCheckStateResponse>();
+    REQUIRE(resp.states.size() == 3);
+    CHECK(resp.states[0].state == "UNSPENT");
+    CHECK(resp.states[1].state == "SPENT");
+    CHECK(resp.states[2].state == "PENDING");
+}
+
+// ============================================================
+// PostRestore tests (NUT-09)
+// ============================================================
+
+TEST_CASE("PostRestoreRequest JSON roundtrip", "[api][nut09]") {
+    auto j = nlohmann::json::parse(R"json({
+        "outputs": [{
+            "amount": 1,
+            "id": "009a1f293253e41e",
+            "B_": "02194603ffa36356f4a56b7df9371fc3192472351453ec7398b8da8117e7c3e104"
+        }]
+    })json");
+
+    auto req = j.get<PostRestoreRequest>();
+    REQUIRE(req.outputs.size() == 1);
+    CHECK(req.outputs[0].amount == 1);
+
+    nlohmann::json j2 = req;
+    CHECK(j2["outputs"].size() == 1);
+}
+
+TEST_CASE("PostRestoreResponse JSON roundtrip", "[api][nut09]") {
+    auto j = nlohmann::json::parse(R"json({
+        "outputs": [{
+            "amount": 1,
+            "id": "009a1f293253e41e",
+            "B_": "02194603ffa36356f4a56b7df9371fc3192472351453ec7398b8da8117e7c3e104"
+        }],
+        "signatures": [{
+            "id": "009a1f293253e41e",
+            "amount": 1,
+            "C_": "03b0f36d6d47ce14df8a7be9137712c42bcdd960b19dd02f1d4a9703b1f31d7513"
+        }]
+    })json");
+
+    auto resp = j.get<PostRestoreResponse>();
+    REQUIRE(resp.outputs.size() == 1);
+    REQUIRE(resp.signatures.size() == 1);
+    CHECK(resp.outputs[0].amount == 1);
+    CHECK(resp.signatures[0].amount == 1);
+
+    nlohmann::json j2 = resp;
+    auto resp2 = j2.get<PostRestoreResponse>();
+    CHECK(resp2.outputs.size() == 1);
+    CHECK(resp2.signatures.size() == 1);
+}
+
+TEST_CASE("PostRestoreResponse rejects mismatched lengths", "[api][nut09]") {
+    auto j = nlohmann::json::parse(R"json({
+        "outputs": [
+            {
+                "amount": 1,
+                "id": "009a1f293253e41e",
+                "B_": "02194603ffa36356f4a56b7df9371fc3192472351453ec7398b8da8117e7c3e104"
+            },
+            {
+                "amount": 2,
+                "id": "009a1f293253e41e",
+                "B_": "03b0f36d6d47ce14df8a7be9137712c42bcdd960b19dd02f1d4a9703b1f31d7513"
+            }
+        ],
+        "signatures": [{
+            "id": "009a1f293253e41e",
+            "amount": 1,
+            "C_": "03b0f36d6d47ce14df8a7be9137712c42bcdd960b19dd02f1d4a9703b1f31d7513"
+        }]
+    })json");
+
+    CHECK_THROWS_AS(j.get<PostRestoreResponse>(), std::invalid_argument);
 }
