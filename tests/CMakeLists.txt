@@ -4,6 +4,7 @@ add_executable(nutcpp_tests
     test_crypto.cpp
     test_base64_url.cpp
     test_encoding.cpp
+    test_api_models.cpp
 )
 
 target_link_libraries(nutcpp_tests
