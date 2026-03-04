@@ -127,7 +127,7 @@ SendResponse ProofSelector::select_proofs_to_send(
 
     for (const auto& p : proofs) {
         uint64_t ppk = get_proof_fee_ppk(p);
-        double ex = include_fees ? p.amount - ppk / 1000.0 : p.amount;
+        double ex = include_fees ? p.amount - std::ceil(ppk / 1000.0) : p.amount;
         proof_with_fees.push_back({&p, ex, ppk});
 
         if (!include_fees || ex > 0) {
