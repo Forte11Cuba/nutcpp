@@ -491,6 +491,55 @@ TEST_CASE("p2pk: post-locktime refund path valid (DotNut New_P2PkRules)", "[p2pk
 }
 
 // ============================================================
+// NUT-11: P2PK dynamic build + sign + verify (DotNut Nut11_Signatures test A)
+// ============================================================
+
+TEST_CASE("p2pk: dynamic build sign verify with 3 keys (DotNut vector)", "[p2pk]") {
+    // Exact keys from DotNut Nut11_Signatures
+    PrivKey secretKey("99590802251e78ee1051648439eedb003dc539093a48a44e7b8f2642c909ea37");
+    PrivKey signing_key_two("0000000000000000000000000000000000000000000000000000000000000001");
+    PrivKey signing_key_three("7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f");
+
+    // Build P2PK conditions: 2-of-2 multisig with locktime and refund
+    P2PKBuilder conditions;
+    conditions.lock = 21000000000;
+    conditions.pubkeys = {signing_key_two.get_pub_key(), signing_key_three.get_pub_key()};
+    conditions.refund_pubkeys = {secretKey.get_pub_key()};
+    conditions.signature_threshold = 2;
+    conditions.sig_flag = "SIG_INPUTS";
+
+    auto ps = conditions.build();
+
+    // Verify builder produced correct structure
+    REQUIRE(ps.data == signing_key_two.get_pub_key().to_hex());
+    REQUIRE(ps.tags.has_value());
+
+    // Wrap in Nut10Secret
+    auto secret_ptr = std::make_shared<P2PKProofSecret>(ps);
+    Nut10Secret nut10_secret(P2PKProofSecret::KEY, secret_ptr);
+
+    // Generate witness with signing keys
+    auto msg = nut10_secret.get_bytes();
+    auto witness_opt = ps.generate_witness(msg, {signing_key_two, signing_key_three});
+    REQUIRE(witness_opt.has_value());
+    REQUIRE(witness_opt->signatures.size() == 2);
+
+    // Verify witness
+    REQUIRE(ps.verify_witness(nut10_secret, witness_opt.value()));
+
+    // Verify roundtrip through load
+    auto loaded = P2PKBuilder::load(ps);
+    REQUIRE(loaded.pubkeys.size() == 2);
+    REQUIRE(loaded.pubkeys[0] == signing_key_two.get_pub_key());
+    REQUIRE(loaded.pubkeys[1] == signing_key_three.get_pub_key());
+    REQUIRE(loaded.signature_threshold == 2);
+    REQUIRE(loaded.lock.value() == 21000000000);
+    REQUIRE(loaded.refund_pubkeys.size() == 1);
+    REQUIRE(loaded.refund_pubkeys[0] == secretKey.get_pub_key());
+    REQUIRE(loaded.sig_flag == "SIG_INPUTS");
+}
+
+// ============================================================
 // NUT-11: P2PK generate_witness + verify roundtrip
 // ============================================================
 

@@ -13,8 +13,9 @@
 #include <sys/random.h>
 #elif defined(__APPLE__)
 #include <Security/SecRandom.h>
-#else
-#include <random>
+#elif defined(_WIN32)
+#include <windows.h>
+#include <bcrypt.h>
 #endif
 
 using namespace std;
@@ -33,10 +34,12 @@ static void fill_random(unsigned char* buf, size_t len) {
 #elif defined(__APPLE__)
     if (SecRandomCopyBytes(kSecRandomDefault, len, buf) != errSecSuccess)
         throw runtime_error("SecRandomCopyBytes() failed");
+#elif defined(_WIN32)
+    if (BCryptGenRandom(NULL, buf, static_cast<ULONG>(len),
+                        BCRYPT_USE_SYSTEM_PREFERRED_RNG) != 0)
+        throw runtime_error("BCryptGenRandom() failed");
 #else
-    random_device rd;
-    for (size_t i = 0; i < len; ++i)
-        buf[i] = static_cast<unsigned char>(rd());
+    #error "No secure random source available for this platform"
 #endif
 }
 
@@ -113,7 +116,7 @@ static int64_t now_unix() {
 // P2PKBuilder
 // ============================================================
 
-Nut10ProofSecret P2PKBuilder::build() const {
+P2PKProofSecret P2PKBuilder::build() const {
     validate();
 
     P2PKProofSecret ps;

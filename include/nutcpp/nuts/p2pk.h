@@ -32,6 +32,8 @@ inline void from_json(const nlohmann::json& j, P2PKWitness& w) {
         w.signatures.clear();
 }
 
+class P2PKProofSecret;  // forward declaration for P2PKBuilder::build()
+
 // ============================================================
 // NUT-11: P2PK Builder
 // ============================================================
@@ -47,7 +49,7 @@ public:
     std::optional<int> refund_signature_threshold;
 
     // Build a P2PKProofSecret from current parameters
-    Nut10ProofSecret build() const;
+    P2PKProofSecret build() const;
 
     // Load parameters from an existing Nut10ProofSecret
     static P2PKBuilder load(const Nut10ProofSecret& ps);
