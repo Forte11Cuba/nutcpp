@@ -35,4 +35,8 @@ bool PubKey::operator==(const PubKey& other) const {
     return secp256k1_ec_pubkey_cmp(get_context(), &key_, &other.key_) == 0;
 }
 
+bool PubKey::operator<(const PubKey& other) const {
+    return secp256k1_ec_pubkey_cmp(get_context(), &key_, &other.key_) < 0;
+}
+
 } // namespace nutcpp
