@@ -3,6 +3,7 @@
 #include "../crypto/sha256.h"
 
 #include <stdexcept>
+#include <algorithm>
 #include <chrono>
 
 using namespace std;
@@ -23,8 +24,13 @@ static PubKey get_dummy_pubkey() {
 // ============================================================
 
 HTLCProofSecret HTLCBuilder::build() const {
-    if (hashlock.size() != 64)
+    if (hashlock.size() != 64 ||
+        !all_of(hashlock.begin(), hashlock.end(), ::isxdigit))
         throw invalid_argument("HTLCBuilder: hashlock must be 64 hex chars");
+
+    // Validate threshold against real pubkeys (before dummy injection)
+    if (static_cast<int>(pubkeys.size()) < signature_threshold)
+        throw invalid_argument("HTLCBuilder: signature threshold exceeds pubkey count");
 
     // Use dummy pubkey trick: prepend dummy to pubkeys so P2PKBuilder
     // puts it in the data field, then replace with hashlock
@@ -60,13 +66,10 @@ HTLCBuilder HTLCBuilder::load(const Nut10ProofSecret& ps) {
 
     auto inner = P2PKBuilder::load(temp);
 
-    // Remove dummy pubkey from the loaded pubkeys
-    auto dummy = get_dummy_pubkey();
+    // Remove dummy pubkey from position 0 (where build() injected it)
     vector<PubKey> real_pubkeys;
-    for (const auto& pk : inner.pubkeys) {
-        if (!(pk == dummy))
-            real_pubkeys.push_back(pk);
-    }
+    if (!inner.pubkeys.empty())
+        real_pubkeys.assign(inner.pubkeys.begin() + 1, inner.pubkeys.end());
 
     HTLCBuilder result;
     result.hashlock = hashlock_val;
@@ -109,10 +112,14 @@ vector<PubKey> HTLCProofSecret::get_allowed_refund_pubkeys(optional<int>& requir
 }
 
 bool HTLCProofSecret::verify_preimage(const string& preimage_hex) const {
-    auto preimage_bytes = hex_to_bytes(preimage_hex);
-    auto hash = internal::SHA256::hash(preimage_bytes.data(), preimage_bytes.size());
-    string hash_hex = bytes_to_hex(hash.data(), hash.size());
-    return hash_hex == data;
+    try {
+        auto preimage_bytes = hex_to_bytes(preimage_hex);
+        auto hash = internal::SHA256::hash(preimage_bytes.data(), preimage_bytes.size());
+        string hash_hex = bytes_to_hex(hash.data(), hash.size());
+        return hash_hex == data;
+    } catch (...) {
+        return false;  // malformed hex → invalid preimage
+    }
 }
 
 optional<HTLCWitness> HTLCProofSecret::generate_witness(
@@ -124,12 +131,12 @@ optional<HTLCWitness> HTLCProofSecret::generate_witness(
 
     // Delegate signature generation to P2PK base
     auto p2pk_witness = P2PKProofSecret::generate_witness(msg, keys);
+    if (!p2pk_witness.has_value())
+        return nullopt;
 
     HTLCWitness result;
     result.preimage = preimage_hex;
-    if (p2pk_witness.has_value()) {
-        result.signatures = move(p2pk_witness->signatures);
-    }
+    result.signatures = move(p2pk_witness->signatures);
     return result;
 }
 
