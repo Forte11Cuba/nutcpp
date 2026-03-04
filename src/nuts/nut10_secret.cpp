@@ -37,7 +37,7 @@ const vector<string>* Nut10ProofSecret::find_tag(const string& key) const {
     if (!tags.has_value())
         return nullptr;
     for (const auto& tag : tags.value()) {
-        if (!tag.empty() && tag[0] == key)
+        if (tag.size() >= 2 && tag[0] == key)
             return &tag;
     }
     return nullptr;
@@ -93,18 +93,22 @@ unique_ptr<ISecret> parse_secret(const string& s) {
 
     // Try to parse as JSON array ["P2PK", {...}] or ["HTLC", {...}]
     if (s.front() == '[') {
+        nlohmann::json j;
         try {
-            auto j = nlohmann::json::parse(s);
-            if (j.is_array() && j.size() == 2 && j[0].is_string()) {
-                string key = j[0].get<string>();
-                if (key == "P2PK" || key == "HTLC") {
-                    auto ps = make_shared<Nut10ProofSecret>();
-                    from_json(j[1], *ps);
-                    return make_unique<Nut10Secret>(key, ps, s);
-                }
+            j = nlohmann::json::parse(s);
+        } catch (const nlohmann::json::parse_error&) {
+            // Not valid JSON, fall through to StringSecret
+            return make_unique<StringSecret>(s);
+        }
+
+        if (j.is_array() && j.size() == 2 && j[0].is_string()) {
+            string key = j[0].get<string>();
+            if (key == "P2PK" || key == "HTLC") {
+                // Recognized key: schema errors should propagate, not degrade silently
+                auto ps = make_shared<Nut10ProofSecret>();
+                from_json(j[1], *ps);
+                return make_unique<Nut10Secret>(key, ps, s);
             }
-        } catch (const nlohmann::json::exception&) {
-            // Not valid JSON array, fall through to StringSecret
         }
     }
 

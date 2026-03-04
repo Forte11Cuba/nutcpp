@@ -294,6 +294,13 @@ TEST_CASE("nut10: parse_secret with invalid JSON falls back to StringSecret", "[
     REQUIRE(ss->value() == "[not valid json");
 }
 
+TEST_CASE("nut10: parse_secret with malformed P2PK payload throws", "[nut10]") {
+    // Recognized key "P2PK" but nonce is int instead of string — schema error should propagate
+    REQUIRE_THROWS(parse_secret("[\"P2PK\",{\"nonce\":1}]"));
+    // Recognized key "HTLC" but missing required "nonce" field
+    REQUIRE_THROWS(parse_secret("[\"HTLC\",{\"data\":\"abc\"}]"));
+}
+
 TEST_CASE("nut10: parse_secret with unknown key falls back to StringSecret", "[nut10]") {
     auto secret = parse_secret("[\"UNKNOWN\",{\"nonce\":\"abc\",\"data\":\"def\"}]");
     auto* ss = dynamic_cast<StringSecret*>(secret.get());
