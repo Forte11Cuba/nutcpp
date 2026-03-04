@@ -11,6 +11,7 @@ add_library(nutcpp
     wallet/fee_helper.cpp
     wallet/proof_selector.cpp
     nuts/nut10_secret.cpp
+    nuts/p2pk.cpp
 )
 
 target_include_directories(nutcpp

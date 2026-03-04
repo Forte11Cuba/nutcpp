@@ -1,4 +1,5 @@
 #include "nutcpp/nuts/nut10_secret.h"
+#include "nutcpp/nuts/p2pk.h"
 #include "nutcpp/crypto/cashu.h"
 
 #include <nlohmann/json.hpp>
@@ -103,8 +104,13 @@ unique_ptr<ISecret> parse_secret(const string& s) {
 
         if (j.is_array() && j.size() == 2 && j[0].is_string()) {
             string key = j[0].get<string>();
-            if (key == "P2PK" || key == "HTLC") {
-                // Recognized key: schema errors should propagate, not degrade silently
+            if (key == "P2PK") {
+                auto ps = make_shared<P2PKProofSecret>();
+                from_json(j[1], *ps);
+                return make_unique<Nut10Secret>(key, ps, s);
+            }
+            if (key == "HTLC") {
+                // TODO: dispatch to HTLCProofSecret in PR 3
                 auto ps = make_shared<Nut10ProofSecret>();
                 from_json(j[1], *ps);
                 return make_unique<Nut10Secret>(key, ps, s);
