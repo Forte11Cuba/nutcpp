@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cmath>
 #include <limits>
+#include <numeric>
 #include <random>
 #include <set>
 
@@ -37,7 +38,9 @@ double calculate_delta(uint64_t amount, uint64_t fee_ppk,
     double net = sum_ex_fees(amount, fee_ppk, include_fees);
     if (net < amount_to_send)
         return std::numeric_limits<double>::infinity();
-    return amount + fee_ppk / 1000.0 - amount_to_send;
+    return include_fees
+             ? (amount + fee_ppk / 1000.0 - amount_to_send)
+             : (static_cast<double>(amount) - amount_to_send);
 }
 
 // Binary search on sorted (ASC by ex_fee) vector.
