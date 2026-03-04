@@ -65,10 +65,16 @@ inline void from_json(const nlohmann::json& j, PostMeltQuoteBolt11Response& r) {
     r.state = j.at("state").get<std::string>();
     if (j.contains("expiry") && !j["expiry"].is_null())
         r.expiry = j["expiry"].get<uint64_t>();
+    else
+        r.expiry = std::nullopt;
     if (j.contains("payment_preimage") && !j["payment_preimage"].is_null())
         r.payment_preimage = j["payment_preimage"].get<std::string>();
+    else
+        r.payment_preimage = std::nullopt;
     if (j.contains("change") && !j["change"].is_null())
         r.change = j["change"].get<std::vector<BlindSignature>>();
+    else
+        r.change = std::nullopt;
 }
 
 // NUT-05/NUT-23: POST /v1/melt/bolt11 request.
@@ -94,6 +100,8 @@ inline void from_json(const nlohmann::json& j, PostMeltBolt11Request& r) {
     r.inputs = j.at("inputs").get<std::vector<Proof>>();
     if (j.contains("outputs") && !j["outputs"].is_null())
         r.outputs = j["outputs"].get<std::vector<BlindedMessage>>();
+    else
+        r.outputs = std::nullopt;
 }
 
 } // namespace nutcpp::api

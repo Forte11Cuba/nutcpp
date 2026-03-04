@@ -33,6 +33,8 @@ inline void from_json(const nlohmann::json& j, PostMintQuoteBolt11Request& r) {
     r.unit = j.at("unit").get<std::string>();
     if (j.contains("description") && !j["description"].is_null())
         r.description = j["description"].get<std::string>();
+    else
+        r.description = std::nullopt;
 }
 
 // NUT-04/NUT-23: POST /v1/mint/quote/bolt11 response (also GET /v1/mint/quote/bolt11/{quote_id}).
@@ -63,10 +65,16 @@ inline void from_json(const nlohmann::json& j, PostMintQuoteBolt11Response& r) {
     r.state = j.at("state").get<std::string>();
     if (j.contains("expiry") && !j["expiry"].is_null())
         r.expiry = j["expiry"].get<uint64_t>();
+    else
+        r.expiry = std::nullopt;
     if (j.contains("amount") && !j["amount"].is_null())
         r.amount = j["amount"].get<uint64_t>();
+    else
+        r.amount = std::nullopt;
     if (j.contains("unit") && !j["unit"].is_null())
         r.unit = j["unit"].get<std::string>();
+    else
+        r.unit = std::nullopt;
 }
 
 // NUT-04: POST /v1/mint/{method} request — exchange a paid quote for blind signatures.
