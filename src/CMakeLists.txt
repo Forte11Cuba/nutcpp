@@ -9,6 +9,7 @@ add_library(nutcpp
     encoding/token_helper.cpp
     api/cashu_http_client.cpp
     wallet/fee_helper.cpp
+    wallet/proof_selector.cpp
 )
 
 target_include_directories(nutcpp
