@@ -13,6 +13,7 @@ add_library(nutcpp
     nuts/nut10_secret.cpp
     nuts/p2pk.cpp
     nuts/htlc.cpp
+    nuts/sig_all.cpp
 )
 
 target_include_directories(nutcpp
