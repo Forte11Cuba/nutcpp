@@ -2,6 +2,9 @@
 #include "nutcpp/api/cashu_error.h"
 #include "nutcpp/api_models/keys_response.h"
 #include "nutcpp/api_models/keysets_response.h"
+#include "nutcpp/api_models/swap_models.h"
+#include "nutcpp/api_models/mint_models.h"
+#include "nutcpp/api_models/melt_models.h"
 
 using namespace nutcpp;
 using namespace nutcpp::api;
@@ -297,4 +300,414 @@ TEST_CASE("KeysetsResponseItem active is always bool, not optional", "[api][nut0
     nlohmann::json j = item;
     REQUIRE(j["active"].is_boolean());
     CHECK(j["active"] == false);
+}
+
+// ============================================================
+// PostSwapRequest/Response tests (NUT-03)
+// ============================================================
+
+TEST_CASE("PostSwapRequest JSON roundtrip", "[api][nut03]") {
+    auto j = nlohmann::json::parse(R"json({
+        "inputs": [{
+            "amount": 8,
+            "id": "009a1f293253e41e",
+            "secret": "secret_string",
+            "C": "02194603ffa36356f4a56b7df9371fc3192472351453ec7398b8da8117e7c3e104"
+        }],
+        "outputs": [{
+            "amount": 4,
+            "id": "009a1f293253e41e",
+            "B_": "03b0f36d6d47ce14df8a7be9137712c42bcdd960b19dd02f1d4a9703b1f31d7513"
+        },
+        {
+            "amount": 4,
+            "id": "009a1f293253e41e",
+            "B_": "0366be6e026e42852498efb82014ca91e89da2e7a5bd3761bdad699fa2aec9fe09"
+        }]
+    })json");
+
+    auto req = j.get<PostSwapRequest>();
+    REQUIRE(req.inputs.size() == 1);
+    REQUIRE(req.outputs.size() == 2);
+    CHECK(req.inputs[0].amount == 8);
+    CHECK(req.outputs[0].amount == 4);
+
+    nlohmann::json j2 = req;
+    auto req2 = j2.get<PostSwapRequest>();
+    CHECK(req2.inputs.size() == 1);
+    CHECK(req2.outputs.size() == 2);
+}
+
+TEST_CASE("PostSwapResponse JSON roundtrip", "[api][nut03]") {
+    auto j = nlohmann::json::parse(R"json({
+        "signatures": [{
+            "id": "009a1f293253e41e",
+            "amount": 4,
+            "C_": "02194603ffa36356f4a56b7df9371fc3192472351453ec7398b8da8117e7c3e104"
+        }]
+    })json");
+
+    auto resp = j.get<PostSwapResponse>();
+    REQUIRE(resp.signatures.size() == 1);
+    CHECK(resp.signatures[0].amount == 4);
+
+    nlohmann::json j2 = resp;
+    CHECK(j2["signatures"].size() == 1);
+}
+
+// ============================================================
+// PostMintQuoteBolt11 tests (NUT-04/NUT-23)
+// ============================================================
+
+TEST_CASE("PostMintQuoteBolt11Request JSON roundtrip", "[api][nut04]") {
+    PostMintQuoteBolt11Request req(10, "sat");
+
+    nlohmann::json j = req;
+    CHECK(j["amount"] == 10);
+    CHECK(j["unit"] == "sat");
+    CHECK_FALSE(j.contains("description"));
+
+    auto req2 = j.get<PostMintQuoteBolt11Request>();
+    CHECK(req2.amount == 10);
+    CHECK(req2.unit == "sat");
+    CHECK_FALSE(req2.description.has_value());
+}
+
+TEST_CASE("PostMintQuoteBolt11Request with description", "[api][nut04]") {
+    PostMintQuoteBolt11Request req(100, "sat", "Payment for coffee");
+
+    nlohmann::json j = req;
+    CHECK(j["amount"] == 100);
+    CHECK(j["unit"] == "sat");
+    REQUIRE(j.contains("description"));
+    CHECK(j["description"] == "Payment for coffee");
+
+    auto req2 = j.get<PostMintQuoteBolt11Request>();
+    REQUIRE(req2.description.has_value());
+    CHECK(req2.description.value() == "Payment for coffee");
+}
+
+// NUT-23 spec example
+TEST_CASE("PostMintQuoteBolt11Response decode NUT-23 spec example", "[api][nut04]") {
+    auto j = nlohmann::json::parse(R"json({
+        "quote": "DSGLX9kevM...",
+        "request": "lnbc100n1pj4apw9...",
+        "amount": 10,
+        "unit": "sat",
+        "state": "UNPAID",
+        "expiry": 1701704757
+    })json");
+
+    auto resp = j.get<PostMintQuoteBolt11Response>();
+    CHECK(resp.quote == "DSGLX9kevM...");
+    CHECK(resp.request == "lnbc100n1pj4apw9...");
+    CHECK(resp.state == "UNPAID");
+    REQUIRE(resp.expiry.has_value());
+    CHECK(resp.expiry.value() == 1701704757);
+    REQUIRE(resp.amount.has_value());
+    CHECK(resp.amount.value() == 10);
+    REQUIRE(resp.unit.has_value());
+    CHECK(resp.unit.value() == "sat");
+}
+
+TEST_CASE("PostMintQuoteBolt11Response JSON roundtrip", "[api][nut04]") {
+    auto j = nlohmann::json::parse(R"json({
+        "quote": "test-id",
+        "request": "lnbc...",
+        "state": "PAID",
+        "expiry": 1640995200,
+        "amount": 1000,
+        "unit": "sat"
+    })json");
+
+    auto resp = j.get<PostMintQuoteBolt11Response>();
+    nlohmann::json j2 = resp;
+    auto resp2 = j2.get<PostMintQuoteBolt11Response>();
+
+    CHECK(resp2.quote == "test-id");
+    CHECK(resp2.state == "PAID");
+    CHECK(resp2.expiry.value() == 1640995200);
+    CHECK(resp2.amount.value() == 1000);
+    CHECK(resp2.unit.value() == "sat");
+}
+
+// Mirrors DotNut NullExpiryTests_PostMintQuoteBolt11Response
+TEST_CASE("PostMintQuoteBolt11Response with null expiry", "[api][nut04]") {
+    auto j = nlohmann::json::parse(R"json({
+        "quote": "test-quote-id",
+        "request": "test-request",
+        "state": "PAID",
+        "expiry": null
+    })json");
+
+    auto resp = j.get<PostMintQuoteBolt11Response>();
+    CHECK(resp.quote == "test-quote-id");
+    CHECK(resp.state == "PAID");
+    CHECK_FALSE(resp.expiry.has_value());
+    CHECK_FALSE(resp.amount.has_value());
+    CHECK_FALSE(resp.unit.has_value());
+}
+
+TEST_CASE("PostMintQuoteBolt11Response with absent expiry", "[api][nut04]") {
+    auto j = nlohmann::json::parse(R"json({
+        "quote": "test-quote-id",
+        "request": "test-request",
+        "state": "UNPAID"
+    })json");
+
+    auto resp = j.get<PostMintQuoteBolt11Response>();
+    CHECK_FALSE(resp.expiry.has_value());
+}
+
+TEST_CASE("PostMintQuoteBolt11Response serialization omits absent optionals", "[api][nut04]") {
+    PostMintQuoteBolt11Response resp;
+    resp.quote = "q1";
+    resp.request = "lnbc...";
+    resp.state = "UNPAID";
+
+    nlohmann::json j = resp;
+    CHECK(j.contains("quote"));
+    CHECK(j.contains("request"));
+    CHECK(j.contains("state"));
+    CHECK_FALSE(j.contains("expiry"));
+    CHECK_FALSE(j.contains("amount"));
+    CHECK_FALSE(j.contains("unit"));
+}
+
+// NUT-04 generic mint request/response (NUT-23 spec example)
+TEST_CASE("PostMintRequest decode NUT-23 spec example", "[api][nut04]") {
+    auto j = nlohmann::json::parse(R"json({
+        "quote": "DSGLX9kevM...",
+        "outputs": [
+            {
+                "amount": 8,
+                "id": "009a1f293253e41e",
+                "B_": "035015e6d7ade60ba8426cefaf1832bbd27257636e44a76b922d78e79b47cb689d"
+            },
+            {
+                "amount": 2,
+                "id": "009a1f293253e41e",
+                "B_": "0288d7649652d0a83fc9c966c969fb217f15904431e61a44b14999fabc1b5d9ac6"
+            }
+        ]
+    })json");
+
+    auto req = j.get<PostMintRequest>();
+    CHECK(req.quote == "DSGLX9kevM...");
+    REQUIRE(req.outputs.size() == 2);
+    CHECK(req.outputs[0].amount == 8);
+    CHECK(req.outputs[1].amount == 2);
+}
+
+TEST_CASE("PostMintResponse decode NUT-23 spec example", "[api][nut04]") {
+    auto j = nlohmann::json::parse(R"json({
+        "signatures": [
+            {
+                "id": "009a1f293253e41e",
+                "amount": 2,
+                "C_": "0224f1c4c564230ad3d96c5033efdc425582397a5a7691d600202732edc6d4b1ec"
+            },
+            {
+                "id": "009a1f293253e41e",
+                "amount": 8,
+                "C_": "0277d1de806ed177007e5b94a8139343b6382e472c752a74e99949d511f7194f6c"
+            }
+        ]
+    })json");
+
+    auto resp = j.get<PostMintResponse>();
+    REQUIRE(resp.signatures.size() == 2);
+    CHECK(resp.signatures[0].amount == 2);
+    CHECK(resp.signatures[1].amount == 8);
+}
+
+// ============================================================
+// PostMeltQuoteBolt11 tests (NUT-05/NUT-23)
+// ============================================================
+
+TEST_CASE("PostMeltQuoteBolt11Request JSON roundtrip", "[api][nut05]") {
+    PostMeltQuoteBolt11Request req("lnbc100n1p3kdrv5sp5...", "sat");
+
+    nlohmann::json j = req;
+    CHECK(j["request"] == "lnbc100n1p3kdrv5sp5...");
+    CHECK(j["unit"] == "sat");
+
+    auto req2 = j.get<PostMeltQuoteBolt11Request>();
+    CHECK(req2.request == "lnbc100n1p3kdrv5sp5...");
+    CHECK(req2.unit == "sat");
+}
+
+// NUT-23 spec example
+TEST_CASE("PostMeltQuoteBolt11Response decode NUT-23 spec example", "[api][nut05]") {
+    auto j = nlohmann::json::parse(R"json({
+        "quote": "TRmjduhIsPxd...",
+        "amount": 10,
+        "fee_reserve": 2,
+        "state": "UNPAID",
+        "expiry": 1701704757
+    })json");
+
+    auto resp = j.get<PostMeltQuoteBolt11Response>();
+    CHECK(resp.quote == "TRmjduhIsPxd...");
+    CHECK(resp.amount == 10);
+    CHECK(resp.fee_reserve == 2);
+    CHECK(resp.state == "UNPAID");
+    REQUIRE(resp.expiry.has_value());
+    CHECK(resp.expiry.value() == 1701704757);
+    CHECK_FALSE(resp.payment_preimage.has_value());
+    CHECK_FALSE(resp.change.has_value());
+}
+
+TEST_CASE("PostMeltQuoteBolt11Response with payment preimage", "[api][nut05]") {
+    auto j = nlohmann::json::parse(R"json({
+        "quote": "TRmjduhIsPxd...",
+        "amount": 10,
+        "fee_reserve": 2,
+        "state": "PAID",
+        "expiry": 1701704757,
+        "payment_preimage": "c5a1ae1f639e1f4a3872e81500fd028bece7bedc1152f740cba5c3417b748c1b"
+    })json");
+
+    auto resp = j.get<PostMeltQuoteBolt11Response>();
+    CHECK(resp.state == "PAID");
+    REQUIRE(resp.payment_preimage.has_value());
+    CHECK(resp.payment_preimage.value() == "c5a1ae1f639e1f4a3872e81500fd028bece7bedc1152f740cba5c3417b748c1b");
+}
+
+TEST_CASE("PostMeltQuoteBolt11Response JSON roundtrip", "[api][nut05]") {
+    auto j = nlohmann::json::parse(R"json({
+        "quote": "test-melt",
+        "amount": 100,
+        "fee_reserve": 5,
+        "state": "PAID",
+        "expiry": 1640995200,
+        "payment_preimage": "abc123"
+    })json");
+
+    auto resp = j.get<PostMeltQuoteBolt11Response>();
+    nlohmann::json j2 = resp;
+    auto resp2 = j2.get<PostMeltQuoteBolt11Response>();
+
+    CHECK(resp2.quote == "test-melt");
+    CHECK(resp2.amount == 100);
+    CHECK(resp2.fee_reserve == 5);
+    CHECK(resp2.state == "PAID");
+    CHECK(resp2.payment_preimage.value() == "abc123");
+}
+
+// Mirrors DotNut NullExpiryTests_PostMeltQuoteBolt11Response
+TEST_CASE("PostMeltQuoteBolt11Response with null expiry", "[api][nut05]") {
+    auto j = nlohmann::json::parse(R"json({
+        "quote": "melt-quote-id",
+        "amount": 1000,
+        "fee_reserve": 50,
+        "state": "PAID",
+        "expiry": null,
+        "payment_preimage": "test-preimage"
+    })json");
+
+    auto resp = j.get<PostMeltQuoteBolt11Response>();
+    CHECK(resp.quote == "melt-quote-id");
+    CHECK_FALSE(resp.expiry.has_value());
+    CHECK(resp.payment_preimage.value() == "test-preimage");
+}
+
+TEST_CASE("PostMeltQuoteBolt11Response with absent expiry", "[api][nut05]") {
+    auto j = nlohmann::json::parse(R"json({
+        "quote": "melt-quote-id",
+        "amount": 1000,
+        "fee_reserve": 50,
+        "state": "UNPAID"
+    })json");
+
+    auto resp = j.get<PostMeltQuoteBolt11Response>();
+    CHECK_FALSE(resp.expiry.has_value());
+    CHECK_FALSE(resp.payment_preimage.has_value());
+    CHECK_FALSE(resp.change.has_value());
+}
+
+TEST_CASE("PostMeltQuoteBolt11Response with NUT-08 change", "[api][nut05]") {
+    auto j = nlohmann::json::parse(R"json({
+        "quote": "q1",
+        "amount": 10,
+        "fee_reserve": 2,
+        "state": "PAID",
+        "expiry": 1701704757,
+        "payment_preimage": "deadbeef",
+        "change": [{
+            "id": "009a1f293253e41e",
+            "amount": 1,
+            "C_": "02194603ffa36356f4a56b7df9371fc3192472351453ec7398b8da8117e7c3e104"
+        }]
+    })json");
+
+    auto resp = j.get<PostMeltQuoteBolt11Response>();
+    REQUIRE(resp.change.has_value());
+    REQUIRE(resp.change.value().size() == 1);
+    CHECK(resp.change.value()[0].amount == 1);
+}
+
+TEST_CASE("PostMeltQuoteBolt11Response serialization omits absent optionals", "[api][nut05]") {
+    PostMeltQuoteBolt11Response resp;
+    resp.quote = "q1";
+    resp.amount = 10;
+    resp.fee_reserve = 2;
+    resp.state = "UNPAID";
+
+    nlohmann::json j = resp;
+    CHECK(j.contains("quote"));
+    CHECK(j.contains("amount"));
+    CHECK(j.contains("fee_reserve"));
+    CHECK(j.contains("state"));
+    CHECK_FALSE(j.contains("expiry"));
+    CHECK_FALSE(j.contains("payment_preimage"));
+    CHECK_FALSE(j.contains("change"));
+}
+
+// PostMeltBolt11Request
+TEST_CASE("PostMeltBolt11Request JSON roundtrip", "[api][nut05]") {
+    auto j = nlohmann::json::parse(R"json({
+        "quote": "od4CN5smMMS3K3QVHkbGGNCTxfcAIyIXeq8IrfhP",
+        "inputs": [{
+            "amount": 10,
+            "id": "009a1f293253e41e",
+            "secret": "secret1",
+            "C": "02194603ffa36356f4a56b7df9371fc3192472351453ec7398b8da8117e7c3e104"
+        }]
+    })json");
+
+    auto req = j.get<PostMeltBolt11Request>();
+    CHECK(req.quote == "od4CN5smMMS3K3QVHkbGGNCTxfcAIyIXeq8IrfhP");
+    REQUIRE(req.inputs.size() == 1);
+    CHECK(req.inputs[0].amount == 10);
+    CHECK_FALSE(req.outputs.has_value());
+
+    nlohmann::json j2 = req;
+    CHECK_FALSE(j2.contains("outputs"));
+}
+
+TEST_CASE("PostMeltBolt11Request with NUT-08 change outputs", "[api][nut05]") {
+    auto j = nlohmann::json::parse(R"json({
+        "quote": "test-quote",
+        "inputs": [{
+            "amount": 12,
+            "id": "009a1f293253e41e",
+            "secret": "secret1",
+            "C": "02194603ffa36356f4a56b7df9371fc3192472351453ec7398b8da8117e7c3e104"
+        }],
+        "outputs": [{
+            "amount": 1,
+            "id": "009a1f293253e41e",
+            "B_": "03b0f36d6d47ce14df8a7be9137712c42bcdd960b19dd02f1d4a9703b1f31d7513"
+        }]
+    })json");
+
+    auto req = j.get<PostMeltBolt11Request>();
+    REQUIRE(req.outputs.has_value());
+    REQUIRE(req.outputs.value().size() == 1);
+    CHECK(req.outputs.value()[0].amount == 1);
+
+    nlohmann::json j2 = req;
+    REQUIRE(j2.contains("outputs"));
+    CHECK(j2["outputs"].size() == 1);
 }
