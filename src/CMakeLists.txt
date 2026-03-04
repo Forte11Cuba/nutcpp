@@ -5,6 +5,8 @@ add_library(nutcpp
     types/keyset_id.cpp
     types/keyset.cpp
     crypto/cashu.cpp
+    encoding/token_v4_encoder.cpp
+    encoding/token_helper.cpp
 )
 
 target_include_directories(nutcpp
