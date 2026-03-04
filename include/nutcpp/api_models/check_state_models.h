@@ -31,10 +31,17 @@ struct StateResponseItem {
     std::string state;          // "UNSPENT", "PENDING", "SPENT"
     std::optional<std::string> witness;
 
+    static bool is_valid_state(const std::string& s) {
+        return s == "UNSPENT" || s == "PENDING" || s == "SPENT";
+    }
+
     StateResponseItem() = default;
     StateResponseItem(std::string Y, std::string state,
                       std::optional<std::string> witness = std::nullopt)
-        : Y(std::move(Y)), state(std::move(state)), witness(std::move(witness)) {}
+        : Y(std::move(Y)), state(std::move(state)), witness(std::move(witness)) {
+        if (!is_valid_state(this->state))
+            throw std::invalid_argument("invalid NUT-07 token state: " + this->state);
+    }
 };
 
 inline void to_json(nlohmann::json& j, const StateResponseItem& item) {
@@ -46,7 +53,7 @@ inline void to_json(nlohmann::json& j, const StateResponseItem& item) {
 inline void from_json(const nlohmann::json& j, StateResponseItem& item) {
     item.Y = j.at("Y").get<std::string>();
     item.state = j.at("state").get<std::string>();
-    if (item.state != "UNSPENT" && item.state != "PENDING" && item.state != "SPENT")
+    if (!StateResponseItem::is_valid_state(item.state))
         throw std::invalid_argument("invalid NUT-07 token state: " + item.state);
     if (j.contains("witness") && !j["witness"].is_null())
         item.witness = j["witness"].get<std::string>();

@@ -33,7 +33,10 @@ struct PostRestoreResponse {
     PostRestoreResponse() = default;
     PostRestoreResponse(std::vector<BlindedMessage> outputs,
                         std::vector<BlindSignature> signatures)
-        : outputs(std::move(outputs)), signatures(std::move(signatures)) {}
+        : outputs(std::move(outputs)), signatures(std::move(signatures)) {
+        if (this->outputs.size() != this->signatures.size())
+            throw std::invalid_argument("restore response: outputs and signatures must have the same length");
+    }
 };
 
 inline void to_json(nlohmann::json& j, const PostRestoreResponse& r) {
