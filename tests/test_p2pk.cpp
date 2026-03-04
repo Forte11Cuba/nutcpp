@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
 #include "nutcpp/nuts/nut10_secret.h"
+#include "nutcpp/nuts/p2pk.h"
 #include "nutcpp/types/secret.h"
 
 using namespace nutcpp;
@@ -313,4 +314,240 @@ TEST_CASE("nut10: parse_secret preserves original bytes for get_bytes", "[nut10]
     auto bytes = secret->get_bytes();
     std::string result(bytes.begin(), bytes.end());
     REQUIRE(result == secret_str);
+}
+
+// ============================================================
+// NUT-11: P2PK — parse_secret dispatches to P2PKProofSecret
+// ============================================================
+
+TEST_CASE("p2pk: parse_secret creates P2PKProofSecret for P2PK key", "[p2pk]") {
+    std::string s = "[\"P2PK\",{\"nonce\":\"abc\",\"data\":\"0249098aa8b9d2fbec49ff8598feb17b592b986e62319a4fa488a3dc36387157a7\",\"tags\":[[\"sigflag\",\"SIG_INPUTS\"]]}]";
+    auto secret = parse_secret(s);
+    auto* nut10 = dynamic_cast<Nut10Secret*>(secret.get());
+    REQUIRE(nut10 != nullptr);
+    auto* p2pk_ps = dynamic_cast<P2PKProofSecret*>(nut10->proof_secret().get());
+    REQUIRE(p2pk_ps != nullptr);
+}
+
+// ============================================================
+// NUT-11: P2PKBuilder
+// ============================================================
+
+TEST_CASE("p2pk: P2PKBuilder build and load roundtrip", "[p2pk]") {
+    PubKey pk1("0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798");
+    PubKey pk2("02142715675faf8da1ecc4d51e0b9e539fa0d52fdd96ed60dbe99adb15d6b05ad9");
+    PubKey refund_pk("033281c37677ea273eb7183b783067f5244933ef78d8c3f15b1a77cb246099c26e");
+
+    P2PKBuilder builder;
+    builder.pubkeys = {pk1, pk2};
+    builder.signature_threshold = 2;
+    builder.lock = 21000000000;
+    builder.refund_pubkeys = {refund_pk};
+    builder.sig_flag = "SIG_INPUTS";
+    builder.nonce = "test_nonce";
+
+    auto ps = builder.build();
+    REQUIRE(ps.data == pk1.to_hex());
+    REQUIRE(ps.nonce == "test_nonce");
+    REQUIRE(ps.tags.has_value());
+
+    // Roundtrip via load
+    auto loaded = P2PKBuilder::load(ps);
+    REQUIRE(loaded.pubkeys.size() == 2);
+    REQUIRE(loaded.pubkeys[0] == pk1);
+    REQUIRE(loaded.pubkeys[1] == pk2);
+    REQUIRE(loaded.signature_threshold == 2);
+    REQUIRE(loaded.lock.value() == 21000000000);
+    REQUIRE(loaded.refund_pubkeys.size() == 1);
+    REQUIRE(loaded.refund_pubkeys[0] == refund_pk);
+    REQUIRE(loaded.sig_flag == "SIG_INPUTS");
+}
+
+TEST_CASE("p2pk: P2PKBuilder validate rejects bad threshold", "[p2pk]") {
+    P2PKBuilder builder;
+    builder.pubkeys = {PubKey("0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798")};
+    builder.signature_threshold = 2; // only 1 pubkey
+    REQUIRE_THROWS_AS(builder.build(), std::invalid_argument);
+}
+
+// ============================================================
+// NUT-11: P2PK Sign + Verify with DotNut test vectors
+// ============================================================
+
+// Helper: extract P2PKProofSecret from a proof JSON string
+static P2PKProofSecret* extract_p2pk(const std::string& proof_json,
+                                      std::unique_ptr<ISecret>& secret_out) {
+    auto j = json::parse(proof_json);
+    std::string secret_str = j["secret"].get<std::string>();
+    secret_out = parse_secret(secret_str);
+    auto* nut10 = dynamic_cast<Nut10Secret*>(secret_out.get());
+    if (!nut10) return nullptr;
+    return dynamic_cast<P2PKProofSecret*>(nut10->proof_secret().get());
+}
+
+static P2PKWitness parse_witness(const std::string& proof_json) {
+    auto j = json::parse(proof_json);
+    std::string witness_str = j["witness"].get<std::string>();
+    auto wj = json::parse(witness_str);
+    P2PKWitness w;
+    from_json(wj, w);
+    return w;
+}
+
+TEST_CASE("p2pk: valid SIG_INPUTS signature (DotNut vector)", "[p2pk]") {
+    std::string proof_json = "{\"amount\":1,\"secret\":\"[\\\"P2PK\\\",{\\\"nonce\\\":\\\"859d4935c4907062a6297cf4e663e2835d90d97ecdd510745d32f6816323a41f\\\",\\\"data\\\":\\\"0249098aa8b9d2fbec49ff8598feb17b592b986e62319a4fa488a3dc36387157a7\\\",\\\"tags\\\":[[\\\"sigflag\\\",\\\"SIG_INPUTS\\\"]]}]\",\"C\":\"02698c4e2b5f9534cd0687d87513c759790cf829aa5739184a3e3735471fbda904\",\"id\":\"009a1f293253e41e\",\"witness\":\"{\\\"signatures\\\":[\\\"60f3c9b766770b46caac1d27e1ae6b77c8866ebaeba0b9489fe6a15a837eaa6fcd6eaa825499c72ac342983983fd3ba3a8a41f56677cc99ffd73da68b59e1383\\\"]}\"}";
+    std::unique_ptr<ISecret> secret;
+    auto* p2pk_ps = extract_p2pk(proof_json, secret);
+    REQUIRE(p2pk_ps != nullptr);
+    auto witness = parse_witness(proof_json);
+    REQUIRE(p2pk_ps->verify_witness(*secret, witness));
+}
+
+TEST_CASE("p2pk: invalid SIG_INPUTS signature (DotNut vector)", "[p2pk]") {
+    std::string proof_json = "{\n  \"amount\": 1,\n  \"secret\": \"[\\\"P2PK\\\",{\\\"nonce\\\":\\\"859d4935c4907062a6297cf4e663e2835d90d97ecdd510745d32f6816323a41f\\\",\\\"data\\\":\\\"0249098aa8b9d2fbec49ff8598feb17b592b986e62319a4fa488a3dc36387157a7\\\",\\\"tags\\\":[[\\\"sigflag\\\",\\\"SIG_INPUTS\\\"]]}]\",\n  \"C\": \"02698c4e2b5f9534cd0687d87513c759790cf829aa5739184a3e3735471fbda904\",\n  \"id\": \"009a1f293253e41e\",\n  \"witness\": \"{\\\"signatures\\\":[\\\"83564aca48c668f50d022a426ce0ed19d3a9bdcffeeaee0dc1e7ea7e98e9eff1840fcc821724f623468c94f72a8b0a7280fa9ef5a54a1b130ef3055217f467b3\\\"]}\"\n}";
+    std::unique_ptr<ISecret> secret;
+    auto* p2pk_ps = extract_p2pk(proof_json, secret);
+    REQUIRE(p2pk_ps != nullptr);
+    auto witness = parse_witness(proof_json);
+    REQUIRE_FALSE(p2pk_ps->verify_witness(*secret, witness));
+}
+
+TEST_CASE("p2pk: valid multisig 2-of-3 (DotNut vector)", "[p2pk]") {
+    std::string proof_json = "{\"amount\":1,\"secret\":\"[\\\"P2PK\\\",{\\\"nonce\\\":\\\"0ed3fcb22c649dd7bbbdcca36e0c52d4f0187dd3b6a19efcc2bfbebb5f85b2a1\\\",\\\"data\\\":\\\"0249098aa8b9d2fbec49ff8598feb17b592b986e62319a4fa488a3dc36387157a7\\\",\\\"tags\\\":[[\\\"pubkeys\\\",\\\"0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798\\\",\\\"02142715675faf8da1ecc4d51e0b9e539fa0d52fdd96ed60dbe99adb15d6b05ad9\\\"],[\\\"n_sigs\\\",\\\"2\\\"],[\\\"sigflag\\\",\\\"SIG_INPUTS\\\"]]}]\",\"C\":\"02698c4e2b5f9534cd0687d87513c759790cf829aa5739184a3e3735471fbda904\",\"id\":\"009a1f293253e41e\",\"witness\":\"{\\\"signatures\\\":[\\\"83564aca48c668f50d022a426ce0ed19d3a9bdcffeeaee0dc1e7ea7e98e9eff1840fcc821724f623468c94f72a8b0a7280fa9ef5a54a1b130ef3055217f467b3\\\",\\\"9a72ca2d4d5075be5b511ee48dbc5e45f259bcf4a4e8bf18587f433098a9cd61ff9737dc6e8022de57c76560214c4568377792d4c2c6432886cc7050487a1f22\\\"]}\"}";
+    std::unique_ptr<ISecret> secret;
+    auto* p2pk_ps = extract_p2pk(proof_json, secret);
+    REQUIRE(p2pk_ps != nullptr);
+    auto witness = parse_witness(proof_json);
+    REQUIRE(p2pk_ps->verify_witness(*secret, witness));
+}
+
+TEST_CASE("p2pk: invalid multisig — only 1 of 2 required (DotNut vector)", "[p2pk]") {
+    std::string proof_json = "{\"amount\":1,\"secret\":\"[\\\"P2PK\\\",{\\\"nonce\\\":\\\"0ed3fcb22c649dd7bbbdcca36e0c52d4f0187dd3b6a19efcc2bfbebb5f85b2a1\\\",\\\"data\\\":\\\"0249098aa8b9d2fbec49ff8598feb17b592b986e62319a4fa488a3dc36387157a7\\\",\\\"tags\\\":[[\\\"pubkeys\\\",\\\"0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798\\\",\\\"02142715675faf8da1ecc4d51e0b9e539fa0d52fdd96ed60dbe99adb15d6b05ad9\\\"],[\\\"n_sigs\\\",\\\"2\\\"],[\\\"sigflag\\\",\\\"SIG_INPUTS\\\"]]}]\",\"C\":\"02698c4e2b5f9534cd0687d87513c759790cf829aa5739184a3e3735471fbda904\",\"id\":\"009a1f293253e41e\",\"witness\":\"{\\\"signatures\\\":[\\\"83564aca48c668f50d022a426ce0ed19d3a9bdcffeeaee0dc1e7ea7e98e9eff1840fcc821724f623468c94f72a8b0a7280fa9ef5a54a1b130ef3055217f467b3\\\"]}\"}";
+    std::unique_ptr<ISecret> secret;
+    auto* p2pk_ps = extract_p2pk(proof_json, secret);
+    REQUIRE(p2pk_ps != nullptr);
+    auto witness = parse_witness(proof_json);
+    REQUIRE_FALSE(p2pk_ps->verify_witness(*secret, witness));
+}
+
+TEST_CASE("p2pk: valid refund path — locktime expired (DotNut vector)", "[p2pk]") {
+    std::string proof_json = "{\n  \"amount\": 64,\n  \"C\": \"0257353051c02e2d650dede3159915c8be123ba4f47cf33183c7fedd20bd91a79b\",\n  \"id\": \"001b6c716bf42c7e\",\n  \"secret\": \"[\\\"P2PK\\\",{\\\"nonce\\\":\\\"4bc88ee09d1886c7461d45da205ca3274e1e3d9da2667c4865045cb18265a407\\\",\\\"data\\\":\\\"03d5edeb839be873df2348785506d36565f3b8f390fb931709a422b5a247ddefb1\\\",\\\"tags\\\":[[\\\"locktime\\\",\\\"21\\\"],[\\\"refund\\\",\\\"0234ad87e907e117db1590cc20a3942ffdfd5137aa563d36095d5cf5f96bada122\\\"]]}]\",\n  \"witness\": \"{\\\"signatures\\\":[\\\"b316c2ff9c15f0c5c3d230e99ad94bc76a11dfccbdc820366a3db7210288f22ef6cedcded1152904ec31056d1d5176d83a2d96df5cd4ff86afdde1c90c63af5e\\\"]}\"\n}";
+    std::unique_ptr<ISecret> secret;
+    auto* p2pk_ps = extract_p2pk(proof_json, secret);
+    REQUIRE(p2pk_ps != nullptr);
+    auto witness = parse_witness(proof_json);
+    // locktime=21 (unix epoch 21) is long expired
+    REQUIRE(p2pk_ps->verify_witness(*secret, witness));
+}
+
+TEST_CASE("p2pk: invalid refund path — locktime not expired (DotNut vector)", "[p2pk]") {
+    std::string proof_json = "{\n  \"amount\": 64,\n  \"C\": \"0215865e3b30bdf6f5cdc1ee2c33379d5629bdf2eff2595603d939ff8c65d80586\",\n  \"id\": \"001b6c716bf42c7e\",\n  \"secret\": \"[\\\"P2PK\\\",{\\\"nonce\\\":\\\"0c3d085898f1abf2b5521035f4d0f4ecf68c6a5109f6bc836833a1188f06be65\\\",\\\"data\\\":\\\"03206e0d488387a816bbafd957be51b073432c6c7a403ec4c2a0b27647326c5150\\\",\\\"tags\\\":[[\\\"locktime\\\",\\\"99999999999\\\"],[\\\"refund\\\",\\\"026acbcd0fff3a424499c83ec892d3155c9d1984438659f448d9d0f1af3e92276a\\\"]]}]\",\n  \"witness\": \"{\\\"signatures\\\":[\\\"e5b10d7627ab39bd0cefa219c63752a0026aa5ae754b91a0c7ee2596222f87942c442aca2957166a6b468350c09c9968792784d2ae7c42fc91739b55689f4c7a\\\"]}\"\n}";
+    std::unique_ptr<ISecret> secret;
+    auto* p2pk_ps = extract_p2pk(proof_json, secret);
+    REQUIRE(p2pk_ps != nullptr);
+    auto witness = parse_witness(proof_json);
+    // locktime=99999999999 is far in the future
+    REQUIRE_FALSE(p2pk_ps->verify_witness(*secret, witness));
+}
+
+// ============================================================
+// NUT-11: New P2PK Rules (post PR #315)
+// ============================================================
+
+TEST_CASE("p2pk: post-locktime standard path valid (DotNut New_P2PkRules)", "[p2pk]") {
+    // After locktime, proofs remain spendable via normal path
+    std::string proof_json = "{\n  \"amount\": 64,\n  \"C\": \"02d7cd858d866fca404b5cb1ffd813946e6d19efa1af00d654080fd20266bdc0b1\",\n  \"id\": \"001b6c716bf42c7e\",\n  \"secret\": \"[\\\"P2PK\\\",{\\\"nonce\\\":\\\"395162bf2d0add3c66aea9f22c45251dbee6e04bd9282addbb366a94cd4fb482\\\",\\\"data\\\":\\\"03ab50a667926fac858bac540766254c14b2b0334d10e8ec766455310224bbecf4\\\",\\\"tags\\\":[[\\\"locktime\\\",\\\"21\\\"],[\\\"pubkeys\\\",\\\"0229a91adec8dd9badb228c628a07fc1bf707a9b7d95dd505c490b1766fa7dc541\\\",\\\"033281c37677ea273eb7183b783067f5244933ef78d8c3f15b1a77cb246099c26e\\\"],[\\\"n_sigs\\\",\\\"2\\\"],[\\\"refund\\\",\\\"03ab50a667926fac858bac540766254c14b2b0334d10e8ec766455310224bbecf4\\\",\\\"033281c37677ea273eb7183b783067f5244933ef78d8c3f15b1a77cb246099c26e\\\"]]}]\"\n}";
+    auto j = json::parse(proof_json);
+    std::string secret_str = j["secret"].get<std::string>();
+    auto secret = parse_secret(secret_str);
+    auto* nut10 = dynamic_cast<Nut10Secret*>(secret.get());
+    REQUIRE(nut10 != nullptr);
+    auto* p2pk_ps = dynamic_cast<P2PKProofSecret*>(nut10->proof_secret().get());
+    REQUIRE(p2pk_ps != nullptr);
+
+    // Standard path witness with n_sigs=2
+    std::string witness_json = "{\"signatures\":[\"6a4dd46f929b4747efe7380d655be5cfc0ea943c679a409ea16d4e40968ce89de885d995937d5b85f24fa33a25df10990c5e11d5397199d779d5cf87d42f6627\",\"0c266fffe2ea2358fb93b5d30dfbcefe52a5bb53d6c85f37d54723613224a256165d20dd095768f168ab2e97bc5a879f7c2a84eee8963c9bcedcd39552dbe093\"]}";
+    auto wj = json::parse(witness_json);
+    P2PKWitness witness;
+    from_json(wj, witness);
+    REQUIRE(p2pk_ps->verify_witness(*secret, witness));
+}
+
+TEST_CASE("p2pk: post-locktime refund path valid (DotNut New_P2PkRules)", "[p2pk]") {
+    // After locktime, refund path also valid with implicit n_sigs_refund=1
+    std::string proof_json = "{\n  \"amount\": 64,\n  \"C\": \"02d7cd858d866fca404b5cb1ffd813946e6d19efa1af00d654080fd20266bdc0b1\",\n  \"id\": \"001b6c716bf42c7e\",\n  \"secret\": \"[\\\"P2PK\\\",{\\\"nonce\\\":\\\"395162bf2d0add3c66aea9f22c45251dbee6e04bd9282addbb366a94cd4fb482\\\",\\\"data\\\":\\\"03ab50a667926fac858bac540766254c14b2b0334d10e8ec766455310224bbecf4\\\",\\\"tags\\\":[[\\\"locktime\\\",\\\"21\\\"],[\\\"pubkeys\\\",\\\"0229a91adec8dd9badb228c628a07fc1bf707a9b7d95dd505c490b1766fa7dc541\\\",\\\"033281c37677ea273eb7183b783067f5244933ef78d8c3f15b1a77cb246099c26e\\\"],[\\\"n_sigs\\\",\\\"2\\\"],[\\\"refund\\\",\\\"03ab50a667926fac858bac540766254c14b2b0334d10e8ec766455310224bbecf4\\\",\\\"033281c37677ea273eb7183b783067f5244933ef78d8c3f15b1a77cb246099c26e\\\"]]}]\"\n}";
+    auto j = json::parse(proof_json);
+    std::string secret_str = j["secret"].get<std::string>();
+    auto secret = parse_secret(secret_str);
+    auto* nut10 = dynamic_cast<Nut10Secret*>(secret.get());
+    auto* p2pk_ps = dynamic_cast<P2PKProofSecret*>(nut10->proof_secret().get());
+
+    // Refund path witness with 1 sig (n_sigs_refund defaults to 1)
+    std::string witness_json = "{\"signatures\":[\"d39631363480adf30433ee25c7cec28237e02b4808d4143469d4f390d4eae6ec97d18ba3cc6494ab1d04372f0838426ea296f25cb4bd8bddb296adc292eeaa96\"]}";
+    auto wj = json::parse(witness_json);
+    P2PKWitness witness;
+    from_json(wj, witness);
+    REQUIRE(p2pk_ps->verify_witness(*secret, witness));
+}
+
+// ============================================================
+// NUT-11: P2PK generate_witness + verify roundtrip
+// ============================================================
+
+TEST_CASE("p2pk: generate_witness and verify roundtrip", "[p2pk]") {
+    PrivKey sk1("0000000000000000000000000000000000000000000000000000000000000001");
+    PrivKey sk2("7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f");
+
+    P2PKBuilder builder;
+    builder.pubkeys = {sk1.get_pub_key(), sk2.get_pub_key()};
+    builder.signature_threshold = 2;
+    builder.sig_flag = "SIG_INPUTS";
+    builder.nonce = "test_nonce_roundtrip";
+
+    auto ps_base = builder.build();
+    // Cast to P2PKProofSecret
+    P2PKProofSecret ps;
+    ps.nonce = ps_base.nonce;
+    ps.data = ps_base.data;
+    ps.tags = ps_base.tags;
+
+    auto secret_ptr = std::make_shared<P2PKProofSecret>(ps);
+    Nut10Secret nut10_secret(P2PKProofSecret::KEY, secret_ptr);
+
+    auto msg = nut10_secret.get_bytes();
+    auto witness_opt = ps.generate_witness(msg, {sk1, sk2});
+    REQUIRE(witness_opt.has_value());
+    REQUIRE(witness_opt->signatures.size() == 2);
+
+    REQUIRE(ps.verify_witness(nut10_secret, witness_opt.value()));
+}
+
+TEST_CASE("p2pk: generate_witness single key", "[p2pk]") {
+    PrivKey sk("99590802251e78ee1051648439eedb003dc539093a48a44e7b8f2642c909ea37");
+
+    P2PKBuilder builder;
+    builder.pubkeys = {sk.get_pub_key()};
+    builder.nonce = "single_key_test";
+
+    auto ps_base = builder.build();
+    P2PKProofSecret ps;
+    ps.nonce = ps_base.nonce;
+    ps.data = ps_base.data;
+    ps.tags = ps_base.tags;
+
+    auto secret_ptr = std::make_shared<P2PKProofSecret>(ps);
+    Nut10Secret nut10_secret(P2PKProofSecret::KEY, secret_ptr);
+
+    auto msg = nut10_secret.get_bytes();
+    auto witness_opt = ps.generate_witness(msg, {sk});
+    REQUIRE(witness_opt.has_value());
+    REQUIRE(witness_opt->signatures.size() == 1);
+
+    REQUIRE(ps.verify_witness(nut10_secret, witness_opt.value()));
+
+    // Wrong key should fail
+    PrivKey wrong_sk("0000000000000000000000000000000000000000000000000000000000000001");
+    P2PKWitness bad_witness;
+    bad_witness.signatures = {"deadbeef"};
+    REQUIRE_FALSE(ps.verify_witness(nut10_secret, bad_witness));
 }
