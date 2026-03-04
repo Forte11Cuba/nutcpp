@@ -25,6 +25,7 @@ public:
     // Comparison
     bool operator==(const PubKey& other) const;
     bool operator!=(const PubKey& other) const { return !(*this == other); }
+    bool operator<(const PubKey& other) const;
 
 private:
     secp256k1_pubkey key_;
