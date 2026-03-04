@@ -51,14 +51,12 @@ inline void to_json(nlohmann::json& j, const StateResponseItem& item) {
 }
 
 inline void from_json(const nlohmann::json& j, StateResponseItem& item) {
-    item.Y = j.at("Y").get<std::string>();
-    item.state = j.at("state").get<std::string>();
-    if (!StateResponseItem::is_valid_state(item.state))
-        throw std::invalid_argument("invalid NUT-07 token state: " + item.state);
+    auto Y = j.at("Y").get<std::string>();
+    auto state = j.at("state").get<std::string>();
+    std::optional<std::string> witness;
     if (j.contains("witness") && !j["witness"].is_null())
-        item.witness = j["witness"].get<std::string>();
-    else
-        item.witness = std::nullopt;
+        witness = j["witness"].get<std::string>();
+    item = StateResponseItem(std::move(Y), std::move(state), std::move(witness));
 }
 
 // NUT-07: POST /v1/checkstate response.

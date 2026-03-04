@@ -44,10 +44,9 @@ inline void to_json(nlohmann::json& j, const PostRestoreResponse& r) {
 }
 
 inline void from_json(const nlohmann::json& j, PostRestoreResponse& r) {
-    r.outputs = j.at("outputs").get<std::vector<BlindedMessage>>();
-    r.signatures = j.at("signatures").get<std::vector<BlindSignature>>();
-    if (r.outputs.size() != r.signatures.size())
-        throw std::invalid_argument("restore response: outputs and signatures must have the same length");
+    auto outputs = j.at("outputs").get<std::vector<BlindedMessage>>();
+    auto signatures = j.at("signatures").get<std::vector<BlindSignature>>();
+    r = PostRestoreResponse(std::move(outputs), std::move(signatures));
 }
 
 } // namespace nutcpp::api
