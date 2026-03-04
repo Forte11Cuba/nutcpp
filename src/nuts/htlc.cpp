@@ -28,9 +28,12 @@ HTLCProofSecret HTLCBuilder::build() const {
         !all_of(hashlock.begin(), hashlock.end(), ::isxdigit))
         throw invalid_argument("HTLCBuilder: hashlock must be 64 hex chars");
 
-    // Validate threshold against real pubkeys (before dummy injection)
+    // Validate thresholds against real pubkeys (before dummy injection)
     if (static_cast<int>(pubkeys.size()) < signature_threshold)
         throw invalid_argument("HTLCBuilder: signature threshold exceeds pubkey count");
+    if (refund_signature_threshold.has_value() &&
+        static_cast<int>(refund_pubkeys.size()) < refund_signature_threshold.value())
+        throw invalid_argument("HTLCBuilder: refund signature threshold exceeds refund pubkey count");
 
     // Use dummy pubkey trick: prepend dummy to pubkeys so P2PKBuilder
     // puts it in the data field, then replace with hashlock
