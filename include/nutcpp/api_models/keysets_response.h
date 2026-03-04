@@ -15,7 +15,7 @@ struct KeysetsResponseItem {
     KeysetId id;
     std::string unit;
     bool active;
-    std::optional<uint64_t> input_fee_ppk;      // 0 if not present (per spec)
+    std::optional<uint64_t> input_fee_ppk;      // nullopt when omitted; spec says assume 0
     std::optional<uint64_t> final_expiry;
 
     KeysetsResponseItem(const KeysetId& id, const std::string& unit, bool active,
