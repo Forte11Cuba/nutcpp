@@ -33,7 +33,7 @@ CashuHttpClient& CashuHttpClient::operator=(CashuHttpClient&&) noexcept = defaul
 
 static nlohmann::json handle_response(const httplib::Result& result) {
     if (!result) {
-        throw runtime_error("HTTP request failed: " + to_string(static_cast<int>(result.error())));
+        throw runtime_error("HTTP request failed: " + httplib::to_string(result.error()));
     }
 
     auto& res = result.value();
