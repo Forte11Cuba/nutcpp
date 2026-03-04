@@ -31,7 +31,7 @@ inline void to_json(nlohmann::json& j, const Nut10ProofSecret& ps) {
     j["nonce"] = ps.nonce;
     if (!ps.data.empty())
         j["data"] = ps.data;
-    if (ps.tags.has_value() && !ps.tags->empty())
+    if (ps.tags.has_value())
         j["tags"] = ps.tags.value();
 }
 
@@ -52,7 +52,6 @@ inline void from_json(const nlohmann::json& j, Nut10ProofSecret& ps) {
 // Implements ISecret: get_bytes() serializes to JSON UTF-8, to_curve() hashes to point.
 class Nut10Secret : public ISecret {
 public:
-    Nut10Secret() = default;
     Nut10Secret(const std::string& key, std::shared_ptr<Nut10ProofSecret> proof_secret);
     Nut10Secret(const std::string& key, std::shared_ptr<Nut10ProofSecret> proof_secret,
                 const std::string& original_string);

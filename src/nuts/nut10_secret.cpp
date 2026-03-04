@@ -48,11 +48,17 @@ const vector<string>* Nut10ProofSecret::find_tag(const string& key) const {
 // ============================================================
 
 Nut10Secret::Nut10Secret(const string& key, shared_ptr<Nut10ProofSecret> proof_secret)
-    : key_(key), proof_secret_(move(proof_secret)) {}
+    : key_(key), proof_secret_(move(proof_secret)) {
+    if (!proof_secret_)
+        throw invalid_argument("Nut10Secret: proof_secret must not be null");
+}
 
 Nut10Secret::Nut10Secret(const string& key, shared_ptr<Nut10ProofSecret> proof_secret,
                          const string& original_string)
-    : key_(key), proof_secret_(move(proof_secret)), original_string_(original_string) {}
+    : key_(key), proof_secret_(move(proof_secret)), original_string_(original_string) {
+    if (!proof_secret_)
+        throw invalid_argument("Nut10Secret: proof_secret must not be null");
+}
 
 string Nut10Secret::to_json_string() const {
     // Serialize as JSON array: ["key", {proof_secret}]

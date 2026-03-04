@@ -257,6 +257,36 @@ TEST_CASE("nut10: parse_secret from DotNut HTLC test vector", "[nut10]") {
     REQUIRE((*refund_tag)[1] == "033281c37677ea273eb7183b783067f5244933ef78d8c3f15b1a77cb246099c26e");
 }
 
+TEST_CASE("nut10: Nut10ProofSecret empty tags roundtrip preserves empty array", "[nut10]") {
+    Nut10ProofSecret ps;
+    ps.nonce = "abc";
+    ps.data = "def";
+    ps.tags = std::vector<std::vector<std::string>>{}; // explicit empty
+
+    json j;
+    to_json(j, ps);
+    REQUIRE(j.contains("tags"));
+    REQUIRE(j["tags"].is_array());
+    REQUIRE(j["tags"].empty());
+
+    Nut10ProofSecret ps2;
+    from_json(j, ps2);
+    REQUIRE(ps2.tags.has_value());
+    REQUIRE(ps2.tags->empty());
+    REQUIRE(ps == ps2);
+}
+
+TEST_CASE("nut10: Nut10Secret rejects null proof_secret", "[nut10]") {
+    REQUIRE_THROWS_AS(
+        Nut10Secret("P2PK", nullptr),
+        std::invalid_argument
+    );
+    REQUIRE_THROWS_AS(
+        Nut10Secret("P2PK", nullptr, "original"),
+        std::invalid_argument
+    );
+}
+
 TEST_CASE("nut10: parse_secret with invalid JSON falls back to StringSecret", "[nut10]") {
     auto secret = parse_secret("[not valid json");
     auto* ss = dynamic_cast<StringSecret*>(secret.get());
