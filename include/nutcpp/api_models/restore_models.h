@@ -1,6 +1,7 @@
 #pragma once
 
 #include <vector>
+#include <stdexcept>
 #include <nlohmann/json.hpp>
 #include "nutcpp/types/blinded_message.h"
 #include "nutcpp/types/blind_signature.h"
@@ -42,6 +43,8 @@ inline void to_json(nlohmann::json& j, const PostRestoreResponse& r) {
 inline void from_json(const nlohmann::json& j, PostRestoreResponse& r) {
     r.outputs = j.at("outputs").get<std::vector<BlindedMessage>>();
     r.signatures = j.at("signatures").get<std::vector<BlindSignature>>();
+    if (r.outputs.size() != r.signatures.size())
+        throw std::invalid_argument("restore response: outputs and signatures must have the same length");
 }
 
 } // namespace nutcpp::api

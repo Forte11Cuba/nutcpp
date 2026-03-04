@@ -937,6 +937,15 @@ TEST_CASE("StateResponseItem serialization omits absent witness", "[api][nut07]"
     CHECK_FALSE(j.contains("witness"));
 }
 
+TEST_CASE("StateResponseItem rejects invalid state", "[api][nut07]") {
+    auto j = nlohmann::json::parse(R"json({
+        "Y": "02abc...",
+        "state": "INVALID"
+    })json");
+
+    CHECK_THROWS_AS(j.get<StateResponseItem>(), std::invalid_argument);
+}
+
 TEST_CASE("PostCheckStateResponse multiple states", "[api][nut07]") {
     auto j = nlohmann::json::parse(R"json({
         "states": [
@@ -998,4 +1007,28 @@ TEST_CASE("PostRestoreResponse JSON roundtrip", "[api][nut09]") {
     auto resp2 = j2.get<PostRestoreResponse>();
     CHECK(resp2.outputs.size() == 1);
     CHECK(resp2.signatures.size() == 1);
+}
+
+TEST_CASE("PostRestoreResponse rejects mismatched lengths", "[api][nut09]") {
+    auto j = nlohmann::json::parse(R"json({
+        "outputs": [
+            {
+                "amount": 1,
+                "id": "009a1f293253e41e",
+                "B_": "02194603ffa36356f4a56b7df9371fc3192472351453ec7398b8da8117e7c3e104"
+            },
+            {
+                "amount": 2,
+                "id": "009a1f293253e41e",
+                "B_": "03b0f36d6d47ce14df8a7be9137712c42bcdd960b19dd02f1d4a9703b1f31d7513"
+            }
+        ],
+        "signatures": [{
+            "id": "009a1f293253e41e",
+            "amount": 1,
+            "C_": "03b0f36d6d47ce14df8a7be9137712c42bcdd960b19dd02f1d4a9703b1f31d7513"
+        }]
+    })json");
+
+    CHECK_THROWS_AS(j.get<PostRestoreResponse>(), std::invalid_argument);
 }

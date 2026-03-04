@@ -3,6 +3,7 @@
 #include <string>
 #include <vector>
 #include <optional>
+#include <stdexcept>
 #include <nlohmann/json.hpp>
 
 namespace nutcpp::api {
@@ -45,6 +46,8 @@ inline void to_json(nlohmann::json& j, const StateResponseItem& item) {
 inline void from_json(const nlohmann::json& j, StateResponseItem& item) {
     item.Y = j.at("Y").get<std::string>();
     item.state = j.at("state").get<std::string>();
+    if (item.state != "UNSPENT" && item.state != "PENDING" && item.state != "SPENT")
+        throw std::invalid_argument("invalid NUT-07 token state: " + item.state);
     if (j.contains("witness") && !j["witness"].is_null())
         item.witness = j["witness"].get<std::string>();
     else
