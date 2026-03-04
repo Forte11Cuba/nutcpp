@@ -7,6 +7,7 @@ add_executable(nutcpp_tests
     test_api_models.cpp
     test_integration.cpp
     test_wallet.cpp
+    test_p2pk.cpp
 )
 
 target_link_libraries(nutcpp_tests

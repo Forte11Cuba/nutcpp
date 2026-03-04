@@ -10,6 +10,7 @@ add_library(nutcpp
     api/cashu_http_client.cpp
     wallet/fee_helper.cpp
     wallet/proof_selector.cpp
+    nuts/nut10_secret.cpp
 )
 
 target_include_directories(nutcpp
