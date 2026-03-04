@@ -5,6 +5,7 @@
 #include <map>
 #include <optional>
 #include <cstdint>
+#include <utility>
 #include <nlohmann/json.hpp>
 
 namespace nutcpp::api {

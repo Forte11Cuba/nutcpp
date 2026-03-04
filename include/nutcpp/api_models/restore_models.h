@@ -2,6 +2,7 @@
 
 #include <vector>
 #include <stdexcept>
+#include <utility>
 #include <nlohmann/json.hpp>
 #include "nutcpp/types/blinded_message.h"
 #include "nutcpp/types/blind_signature.h"

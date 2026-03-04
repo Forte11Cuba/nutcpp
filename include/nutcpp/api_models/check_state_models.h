@@ -4,6 +4,7 @@
 #include <vector>
 #include <optional>
 #include <stdexcept>
+#include <utility>
 #include <nlohmann/json.hpp>
 
 namespace nutcpp::api {
