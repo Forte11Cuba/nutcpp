@@ -1,4 +1,5 @@
 #include <catch2/catch_test_macros.hpp>
+#include <algorithm>
 #include "nutcpp/api/cashu_http_client.h"
 #include "nutcpp/api_models/mint_models.h"
 #include "nutcpp/api_models/melt_models.h"
@@ -74,9 +75,11 @@ TEST_CASE("GET /v1/keys/{id} from testnut", "[integration]") {
     auto keys_response = client.get_keys(target_id);
     REQUIRE(!keys_response.keysets.empty());
 
-    // The returned keyset should match the requested ID.
-    CHECK(keys_response.keysets[0].id == target_id);
-    CHECK(keys_response.keysets[0].keys.size() > 0);
+    // Find the keyset matching our target ID (response order not guaranteed).
+    auto it = std::find_if(keys_response.keysets.begin(), keys_response.keysets.end(),
+        [&](const auto& ks) { return ks.id == target_id; });
+    REQUIRE(it != keys_response.keysets.end());
+    CHECK(!it->keys.empty());
 }
 
 TEST_CASE("POST /v1/mint/quote/bolt11 from testnut", "[integration]") {

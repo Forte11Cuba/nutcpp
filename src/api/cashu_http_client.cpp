@@ -10,6 +10,11 @@ namespace nutcpp::api {
 
 CashuHttpClient::CashuHttpClient(const string& mint_url)
     : client_(make_unique<httplib::Client>(mint_url)) {
+    client_->set_connection_timeout(10, 0);
+    client_->set_write_timeout(10, 0);
+    // Read timeout is long: NUT-05 melt can block while a Lightning payment
+    // completes, which may take a long time. Spec says "use no or very long timeout".
+    client_->set_read_timeout(120, 0);
     // Follow redirects (some mints use them).
     client_->set_follow_location(true);
     // Content type for all requests.
