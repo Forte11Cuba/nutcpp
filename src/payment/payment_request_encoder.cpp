@@ -3,6 +3,7 @@
 #include <nlohmann/json.hpp>
 #include <stdexcept>
 #include <algorithm>
+#include <cctype>
 
 using namespace std;
 using ordered_json = nlohmann::ordered_json;
@@ -24,10 +25,15 @@ static ordered_json tags_to_cbor(const vector<Tag>& tags) {
 }
 
 static vector<Tag> tags_from_cbor(const ordered_json& arr) {
+    if (!arr.is_array())
+        throw invalid_argument("Invalid tag container: expected array");
+
     vector<Tag> tags;
     for (auto& item : arr) {
-        if (!item.is_array() || item.empty()) continue;
+        if (!item.is_array() || item.empty())
+            throw invalid_argument("Invalid tag entry: expected non-empty array");
         vector<string> flat;
+        flat.reserve(item.size());
         for (auto& elem : item)
             flat.push_back(elem.get<string>());
         tags.emplace_back(flat);

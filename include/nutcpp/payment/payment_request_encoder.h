@@ -13,7 +13,7 @@ public:
     // Encode a PaymentRequest to "creqA..." string
     static std::string encode(const PaymentRequest& request);
 
-    // Decode a "creqA..." string to PaymentRequest
+    // Decode base64url(CBOR) payload (without "creqA" prefix) to PaymentRequest
     static PaymentRequest decode(const std::string& payload);
 
     // Parse any payment request format (creqA, creqB in future)
