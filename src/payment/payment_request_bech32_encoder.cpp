@@ -13,6 +13,8 @@ namespace nutcpp::payment {
 
 static void write_tlv(vector<uint8_t>& buf, uint8_t tag,
                        const uint8_t* data, size_t len) {
+    if (len > 0xFFFF)
+        throw invalid_argument("TLV value too long (max 65535 bytes)");
     buf.push_back(tag);
     buf.push_back(static_cast<uint8_t>((len >> 8) & 0xFF));
     buf.push_back(static_cast<uint8_t>(len & 0xFF));
