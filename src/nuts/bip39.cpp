@@ -1,8 +1,11 @@
 #include "bip39.h"
+#include "bip39_wordlist.h"
 
 #include <sstream>
 #include <stdexcept>
+#include <unordered_set>
 #include <openssl/evp.h>
+#include <openssl/crypto.h>
 #include <cstring>
 
 using namespace std;
@@ -16,7 +19,16 @@ static bool valid_word_count(int count) {
            count == 21 || count == 24;
 }
 
-// Normalize mnemonic: trim and collapse whitespace to single spaces.
+// Build a static lookup set from the BIP-39 English wordlist for O(1) validation
+static const unordered_set<string>& wordlist_set() {
+    static const unordered_set<string> s = [] {
+        const auto& words = bip39_wordlist();
+        return unordered_set<string>(words.begin(), words.end());
+    }();
+    return s;
+}
+
+// Normalize mnemonic: trim, collapse whitespace, validate each word against BIP-39 English.
 // For English wordlist, no Unicode NFKD normalization is needed (all ASCII).
 static string normalize_mnemonic(const string& mnemonic) {
     istringstream iss(mnemonic);
@@ -33,7 +45,23 @@ static string normalize_mnemonic(const string& mnemonic) {
         throw invalid_argument("mnemonic is empty");
     if (!valid_word_count(count))
         throw invalid_argument("word count should be 12, 15, 18, 21 or 24");
+
+    // Validate each word exists in BIP-39 English wordlist
+    const auto& valid_words = wordlist_set();
+    istringstream iss2(result);
+    while (iss2 >> word) {
+        if (valid_words.find(word) == valid_words.end())
+            throw invalid_argument("invalid mnemonic word: " + word);
+    }
+
     return result;
+}
+
+// Securely wipe a string's internal buffer
+static void secure_wipe(string& s) {
+    if (!s.empty())
+        OPENSSL_cleanse(&s[0], s.size());
+    s.clear();
 }
 
 vector<uint8_t> mnemonic_to_seed(const string& mnemonic,
@@ -55,8 +83,14 @@ vector<uint8_t> mnemonic_to_seed(const string& mnemonic,
         seed.data()
     );
 
-    if (ok != 1)
+    // Wipe sensitive buffers before returning or throwing
+    secure_wipe(normalized);
+    secure_wipe(salt);
+
+    if (ok != 1) {
+        OPENSSL_cleanse(seed.data(), seed.size());
         throw runtime_error("PBKDF2-HMAC-SHA512 failed");
+    }
 
     return seed;
 }
