@@ -37,6 +37,9 @@ static void write_tag_tuple(vector<uint8_t>& buf, uint8_t tag,
         total += 1 + s.size();
     }
 
+    if (total > 65535)
+        throw invalid_argument("Tag tuple total length exceeds 65535 bytes");
+
     buf.push_back(tag);
     buf.push_back(static_cast<uint8_t>((total >> 8) & 0xFF));
     buf.push_back(static_cast<uint8_t>(total & 0xFF));
