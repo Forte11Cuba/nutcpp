@@ -126,11 +126,11 @@ PaymentRequest PaymentRequestEncoder::decode(const string& payload) {
 
     if (cbor.contains("nut10")) {
         auto& n = cbor["nut10"];
+        if (!n.contains("k") || !n.contains("d"))
+            throw invalid_argument("Invalid nut10: missing required fields 'k' and/or 'd'");
         Nut10LockingCondition nut10;
-        if (n.contains("k"))
-            nut10.kind = n["k"].get<string>();
-        if (n.contains("d"))
-            nut10.data = n["d"].get<string>();
+        nut10.kind = n["k"].get<string>();
+        nut10.data = n["d"].get<string>();
         if (n.contains("t"))
             nut10.tags = tags_from_cbor(n["t"]);
         r.nut10 = nut10;
