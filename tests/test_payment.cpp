@@ -4,6 +4,7 @@
 #include "nutcpp/payment/payment_request_transport.h"
 #include "nutcpp/payment/payment_request.h"
 #include "nutcpp/payment/payment_request_payload.h"
+#include "nutcpp/payment/payment_request_encoder.h"
 
 using namespace nutcpp;
 using namespace nutcpp::payment;
@@ -283,4 +284,109 @@ TEST_CASE("PaymentRequest multiple transports", "[payment]") {
     REQUIRE(r2.transports[0].tags.has_value());
     REQUIRE(r2.transports[1].type == "post");
     REQUIRE_FALSE(r2.transports[1].tags.has_value());
+}
+
+// ====== PaymentRequestEncoder (creqA) ======
+
+TEST_CASE("NUT-18 decode spec example creqA", "[payment]") {
+    // Vector from NUT-18 spec and DotNut Nut18Tests
+    std::string creqA =
+        "creqApWF0gaNhdGVub3N0cmFheKlucHJvZmlsZTFxeTI4d3VtbjhnaGo3dW45ZDNzaGp0bnl2OWtoMnVld2Q5aHN6OW1od2RlbjV0ZTB3ZmprY2N0ZTljdXJ4dmVuOWVlaHFjdHJ2NWhzenJ0aHdkZW41dGUwZGVoaHh0bnZkYWtxcWd5ZGFxeTdjdXJrNDM5eWtwdGt5c3Y3dWRoZGh1NjhzdWNtMjk1YWtxZWZkZWhrZjBkNDk1Y3d1bmw1YWeBgmFuYjE3YWloYjdhOTAxNzZhYQphdWNzYXRhbYF4Imh0dHBzOi8vbm9mZWVzLnRlc3RudXQuY2FzaHUuc3BhY2U=";
+
+    auto pr = PaymentRequestEncoder::parse(creqA);
+    REQUIRE(pr.payment_id.value() == "b7a90176");
+    REQUIRE(pr.amount.value() == 10);
+    REQUIRE(pr.unit.value() == "sat");
+    REQUIRE(pr.mints.has_value());
+    REQUIRE(pr.mints->size() == 1);
+    REQUIRE(pr.mints->at(0) == "https://nofees.testnut.cashu.space");
+    REQUIRE(pr.transports.size() == 1);
+    auto& t = pr.transports[0];
+    REQUIRE(t.type == "nostr");
+    REQUIRE(t.target == "nprofile1qy28wumn8ghj7un9d3shjtnyv9kh2uewd9hsz9mhwden5te0wfjkccte9curxven9eehqctrv5hszrthwden5te0dehhxtnvdakqqgydaqy7curk439ykptkysv7udhdhu68sucm295akqefdehkf0d495cwunl5");
+    REQUIRE(t.tags.has_value());
+    REQUIRE(t.tags->size() == 1);
+    REQUIRE(t.tags->at(0).key == "n");
+    REQUIRE(t.tags->at(0).values[0] == "17");
+}
+
+TEST_CASE("creqA encode roundtrip", "[payment]") {
+    PaymentRequest r;
+    r.payment_id = "test123";
+    r.amount = 100;
+    r.unit = "sat";
+    r.mints = std::vector<std::string>{"https://mint.example.com"};
+    r.transports = {PaymentRequestTransport("post", "https://api.example.com/pay")};
+
+    auto encoded = PaymentRequestEncoder::encode(r);
+    REQUIRE(encoded.substr(0, 5) == "creqA");
+
+    auto decoded = PaymentRequestEncoder::parse(encoded);
+    REQUIRE(decoded.payment_id.value() == "test123");
+    REQUIRE(decoded.amount.value() == 100);
+    REQUIRE(decoded.unit.value() == "sat");
+    REQUIRE(decoded.mints->at(0) == "https://mint.example.com");
+    REQUIRE(decoded.transports.size() == 1);
+    REQUIRE(decoded.transports[0].type == "post");
+    REQUIRE(decoded.transports[0].target == "https://api.example.com/pay");
+}
+
+TEST_CASE("creqA roundtrip with nut10", "[payment]") {
+    PaymentRequest r;
+    r.amount = 500;
+    r.unit = "sat";
+    r.transports = {};
+    r.nut10 = Nut10LockingCondition(
+        "P2PK", "02abcdef",
+        std::vector<Tag>{Tag("timeout", {"3600"}), Tag("sigflag", {"SIG_ALL"})}
+    );
+
+    auto encoded = PaymentRequestEncoder::encode(r);
+    auto decoded = PaymentRequestEncoder::parse(encoded);
+
+    REQUIRE(decoded.nut10.has_value());
+    REQUIRE(decoded.nut10->kind == "P2PK");
+    REQUIRE(decoded.nut10->data == "02abcdef");
+    REQUIRE(decoded.nut10->tags.has_value());
+    REQUIRE(decoded.nut10->tags->size() == 2);
+    REQUIRE(decoded.nut10->tags->at(0).key == "timeout");
+    REQUIRE(decoded.nut10->tags->at(0).values[0] == "3600");
+    REQUIRE(decoded.nut10->tags->at(1).key == "sigflag");
+    REQUIRE(decoded.nut10->tags->at(1).values[0] == "SIG_ALL");
+}
+
+TEST_CASE("creqA roundtrip minimal (no optional fields)", "[payment]") {
+    PaymentRequest r;
+    r.transports = {PaymentRequestTransport("post", "https://example.com")};
+
+    auto encoded = PaymentRequestEncoder::encode(r);
+    auto decoded = PaymentRequestEncoder::parse(encoded);
+
+    REQUIRE_FALSE(decoded.payment_id.has_value());
+    REQUIRE_FALSE(decoded.amount.has_value());
+    REQUIRE_FALSE(decoded.unit.has_value());
+    REQUIRE_FALSE(decoded.single_use.has_value());
+    REQUIRE_FALSE(decoded.mints.has_value());
+    REQUIRE_FALSE(decoded.description.has_value());
+    REQUIRE_FALSE(decoded.nut10.has_value());
+    REQUIRE(decoded.transports.size() == 1);
+}
+
+TEST_CASE("creqA parse case insensitive prefix", "[payment]") {
+    // Build a valid creqA first
+    PaymentRequest r;
+    r.unit = "sat";
+    r.transports = {};
+    auto encoded = PaymentRequestEncoder::encode(r);
+
+    // Replace prefix with mixed case
+    std::string lower = "creqa" + encoded.substr(5);
+    auto decoded = PaymentRequestEncoder::parse(lower);
+    REQUIRE(decoded.unit.value() == "sat");
+}
+
+TEST_CASE("creqA parse invalid prefix throws", "[payment]") {
+    REQUIRE_THROWS_AS(PaymentRequestEncoder::parse("invalid_string"), std::invalid_argument);
+    REQUIRE_THROWS_AS(PaymentRequestEncoder::parse("creq"), std::invalid_argument);
+    REQUIRE_THROWS_AS(PaymentRequestEncoder::parse(""), std::invalid_argument);
 }
