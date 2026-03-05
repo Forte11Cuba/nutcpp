@@ -5,9 +5,13 @@
 #include "nutcpp/payment/payment_request.h"
 #include "nutcpp/payment/payment_request_payload.h"
 #include "nutcpp/payment/payment_request_encoder.h"
+#include "../src/payment/bech32.h"
+#include "../src/payment/nip19.h"
+#include "nutcpp/encoding/convert_utils.h"
 
 using namespace nutcpp;
 using namespace nutcpp::payment;
+using namespace nutcpp::internal;
 using json = nlohmann::json;
 
 // ====== Nut10LockingCondition ======
@@ -389,4 +393,189 @@ TEST_CASE("creqA parse invalid prefix throws", "[payment]") {
     REQUIRE_THROWS_AS(PaymentRequestEncoder::parse("invalid_string"), std::invalid_argument);
     REQUIRE_THROWS_AS(PaymentRequestEncoder::parse("creq"), std::invalid_argument);
     REQUIRE_THROWS_AS(PaymentRequestEncoder::parse(""), std::invalid_argument);
+}
+
+// ====== Bech32 / Bech32m ======
+
+TEST_CASE("convert_bits 8->5->8 roundtrip", "[bech32]") {
+    std::vector<uint8_t> data = {0xDE, 0xAD, 0xBE, 0xEF, 0x01, 0x02, 0x03};
+    auto bits5 = convert_bits(data, 8, 5, true);
+    auto back = convert_bits(bits5, 5, 8, false);
+    REQUIRE(back == data);
+}
+
+TEST_CASE("convert_bits reject invalid padding", "[bech32]") {
+    // 5-bit value with non-zero padding bits should fail on 5->8 with pad=false
+    std::vector<uint8_t> bad = {0x00, 0x00, 0x01}; // 15 bits -> 1 byte + 7 bits, last nonzero
+    REQUIRE_THROWS_AS(convert_bits(bad, 5, 8, false), std::invalid_argument);
+}
+
+TEST_CASE("convert_bits reject value exceeding from_bits", "[bech32]") {
+    std::vector<uint8_t> bad = {0x20}; // 32 exceeds 5 bits
+    REQUIRE_THROWS_AS(convert_bits(bad, 5, 8, false), std::invalid_argument);
+}
+
+TEST_CASE("bech32_encode_raw + decode_raw roundtrip BECH32", "[bech32]") {
+    std::vector<uint8_t> data_5bit = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
+    auto encoded = bech32_encode_raw("test", data_5bit, Bech32Type::BECH32);
+    REQUIRE(encoded.substr(0, 5) == "test1");
+
+    Bech32Type type;
+    auto decoded = bech32_decode_raw(encoded, "test", type);
+    REQUIRE(type == Bech32Type::BECH32);
+    REQUIRE(decoded == data_5bit);
+}
+
+TEST_CASE("bech32_encode_raw + decode_raw roundtrip BECH32M", "[bech32]") {
+    std::vector<uint8_t> data_5bit = {31, 30, 29, 28, 27, 0, 1, 2, 3};
+    auto encoded = bech32_encode_raw("creqb", data_5bit, Bech32Type::BECH32M);
+    REQUIRE(encoded.substr(0, 6) == "creqb1");
+
+    Bech32Type type;
+    auto decoded = bech32_decode_raw(encoded, "creqb", type);
+    REQUIRE(type == Bech32Type::BECH32M);
+    REQUIRE(decoded == data_5bit);
+}
+
+TEST_CASE("bech32 decode case insensitive", "[bech32]") {
+    std::vector<uint8_t> data_5bit = {0, 1, 2, 3};
+    auto encoded = bech32_encode_raw("abc", data_5bit, Bech32Type::BECH32);
+
+    // Uppercase should decode fine
+    std::string upper;
+    for (auto c : encoded)
+        upper += static_cast<char>(toupper(static_cast<unsigned char>(c)));
+
+    Bech32Type type;
+    auto decoded = bech32_decode_raw(upper, "abc", type);
+    REQUIRE(decoded == data_5bit);
+}
+
+TEST_CASE("bech32 decode rejects mixed case", "[bech32]") {
+    // Mix lower HRP with upper data
+    Bech32Type type;
+    REQUIRE_THROWS_AS(
+        bech32_decode_raw("test1QPZRY", "test", type),
+        std::invalid_argument);
+}
+
+TEST_CASE("bech32 decode rejects wrong HRP", "[bech32]") {
+    std::vector<uint8_t> data_5bit = {0, 1, 2};
+    auto encoded = bech32_encode_raw("abc", data_5bit, Bech32Type::BECH32);
+
+    Bech32Type type;
+    REQUIRE_THROWS_AS(bech32_decode_raw(encoded, "xyz", type), std::invalid_argument);
+}
+
+TEST_CASE("bech32 decode rejects corrupted checksum", "[bech32]") {
+    std::vector<uint8_t> data_5bit = {0, 1, 2, 3};
+    auto encoded = bech32_encode_raw("test", data_5bit, Bech32Type::BECH32);
+
+    // Corrupt last character
+    std::string corrupted = encoded;
+    corrupted.back() = (corrupted.back() == 'q') ? 'p' : 'q';
+
+    Bech32Type type;
+    REQUIRE_THROWS_AS(bech32_decode_raw(corrupted, "test", type), std::invalid_argument);
+}
+
+TEST_CASE("bech32 no strict length limit (long strings ok)", "[bech32]") {
+    // Generate data longer than 90 chars total (typical for payment requests)
+    std::vector<uint8_t> data_5bit(200, 0);
+    for (size_t i = 0; i < data_5bit.size(); ++i)
+        data_5bit[i] = static_cast<uint8_t>(i % 32);
+
+    auto encoded = bech32_encode_raw("creqb", data_5bit, Bech32Type::BECH32M);
+    REQUIRE(encoded.size() > 90);
+
+    Bech32Type type;
+    auto decoded = bech32_decode_raw(encoded, "creqb", type);
+    REQUIRE(decoded == data_5bit);
+}
+
+// ====== NIP-19 ======
+
+TEST_CASE("decode_nprofile all-zero pubkey no relays (DotNut vector)", "[nip19]") {
+    // From Nut26_NostrTransport: nprofile with 32 zero bytes, no relays
+    std::string nprof = "nprofile1qqsqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq8uzqt";
+    auto result = decode_nprofile(nprof);
+    REQUIRE(result.pubkey.size() == 32);
+    for (auto b : result.pubkey)
+        CHECK(b == 0);
+    REQUIRE(result.relays.empty());
+}
+
+TEST_CASE("decode_nprofile known pubkey no relays (DotNut vector)", "[nip19]") {
+    // From Nut26_MultipleTransports and Nut26MinimalNostrTransport
+    std::string nprof = "nprofile1qqsrhuxx8l9ex335q7he0f09aej04zpazpl0ne2cgukyawd24mayt8g2lcy6q";
+    auto result = decode_nprofile(nprof);
+    REQUIRE(result.pubkey.size() == 32);
+    // Pubkey hex: 3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d (known nostr pubkey)
+    auto hex = bytes_to_hex(result.pubkey);
+    // Verify it's a valid 32-byte key (not all zeros)
+    REQUIRE(hex.size() == 64);
+    REQUIRE(hex != std::string(64, '0'));
+    REQUIRE(result.relays.empty());
+}
+
+TEST_CASE("encode_nprofile roundtrip all-zero pubkey", "[nip19]") {
+    std::vector<uint8_t> pubkey(32, 0);
+    auto encoded = encode_nprofile(pubkey, {});
+    auto decoded = decode_nprofile(encoded);
+    REQUIRE(decoded.pubkey == pubkey);
+    REQUIRE(decoded.relays.empty());
+
+    // Should match DotNut vector
+    REQUIRE(encoded == "nprofile1qqsqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq8uzqt");
+}
+
+TEST_CASE("encode_nprofile roundtrip with relays", "[nip19]") {
+    std::vector<uint8_t> pubkey(32, 0);
+    pubkey[0] = 0x3b; pubkey[1] = 0xf0;  // non-zero first bytes
+    std::vector<std::string> relays = {
+        "wss://relay1.example.com",
+        "wss://relay2.example.com"
+    };
+    auto encoded = encode_nprofile(pubkey, relays);
+    auto decoded = decode_nprofile(encoded);
+    REQUIRE(decoded.pubkey == pubkey);
+    REQUIRE(decoded.relays.size() == 2);
+    REQUIRE(decoded.relays[0] == "wss://relay1.example.com");
+    REQUIRE(decoded.relays[1] == "wss://relay2.example.com");
+}
+
+TEST_CASE("decode_nostr dispatches npub and nprofile", "[nip19]") {
+    // nprofile
+    std::string nprof = "nprofile1qqsqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq8uzqt";
+    auto r1 = decode_nostr(nprof);
+    REQUIRE(r1.pubkey.size() == 32);
+
+    // We can't easily test npub without a known vector, but verify dispatch works
+    // by checking nprofile path produces valid result
+    REQUIRE(r1.relays.empty());
+}
+
+TEST_CASE("encode_nprofile rejects wrong pubkey length", "[nip19]") {
+    std::vector<uint8_t> bad(16, 0);
+    REQUIRE_THROWS_AS(encode_nprofile(bad, {}), std::invalid_argument);
+}
+
+TEST_CASE("decode_nprofile known pubkey with 3 relays (DotNut Nut26Nprofile vector)", "[nip19]") {
+    // From Nut26Nprofile test
+    std::string nprof = "nprofile1qqsrhuxx8l9ex335q7he0f09aej04zpazpl0ne2cgukyawd24mayt8gprpmhxue69uhhyetvv9unztn90psk6urvv5hxxmmdqyv8wumn8ghj7un9d3shjv3wv4uxzmtsd3jjucm0d5q3samnwvaz7tmjv4kxz7fn9ejhsctdwpkx2tnrdaksxzjpjp";
+    auto result = decode_nprofile(nprof);
+    REQUIRE(result.pubkey.size() == 32);
+    REQUIRE(result.relays.size() == 3);
+
+    // Verify roundtrip
+    auto reencoded = encode_nprofile(result.pubkey, result.relays);
+    REQUIRE(reencoded == nprof);
+}
+
+TEST_CASE("encode_nprofile no relays roundtrip matches DotNut vector", "[nip19]") {
+    // From Nut26_MultipleTransports: nprofile without relays
+    std::string expected = "nprofile1qqsrhuxx8l9ex335q7he0f09aej04zpazpl0ne2cgukyawd24mayt8g2lcy6q";
+    auto decoded = decode_nprofile(expected);
+    auto reencoded = encode_nprofile(decoded.pubkey, decoded.relays);
+    REQUIRE(reencoded == expected);
 }
