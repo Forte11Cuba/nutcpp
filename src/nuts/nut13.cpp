@@ -62,7 +62,7 @@ static vector<unsigned char> build_hmac_message(const KeysetId& keyset_id,
                                                 uint32_t counter,
                                                 uint8_t type_byte) {
     static const string prefix = "Cashu_KDF_HMAC_SHA256";
-    auto kid_bytes = hex_to_bytes(keyset_id.to_string());
+    auto kid_bytes = keyset_id.get_bytes();
 
     vector<unsigned char> message;
     message.reserve(prefix.size() + kid_bytes.size() + 8 + 1);
@@ -103,6 +103,8 @@ static vector<uint8_t> derive_blinding_factor_v1(const vector<uint8_t>& seed,
 string derive_secret(const vector<uint8_t>& seed,
                      const KeysetId& keyset_id,
                      uint32_t counter) {
+    if (seed.size() != 64)
+        throw invalid_argument("seed must be 64 bytes");
     switch (keyset_id.get_version()) {
         case 0x00: return derive_secret_v0(seed, keyset_id, counter);
         case 0x01: return derive_secret_v1(seed, keyset_id, counter);
@@ -115,6 +117,8 @@ string derive_secret(const vector<uint8_t>& seed,
 vector<uint8_t> derive_blinding_factor(const vector<uint8_t>& seed,
                                        const KeysetId& keyset_id,
                                        uint32_t counter) {
+    if (seed.size() != 64)
+        throw invalid_argument("seed must be 64 bytes");
     switch (keyset_id.get_version()) {
         case 0x00: return derive_blinding_factor_v0(seed, keyset_id, counter);
         case 0x01: return derive_blinding_factor_v1(seed, keyset_id, counter);

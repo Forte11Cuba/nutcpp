@@ -2,8 +2,9 @@
 #include "nutcpp/nuts/nut13.h"
 #include "nutcpp/encoding/convert_utils.h"
 
-// Internal BIP-39 for seed derivation in tests
+// Internal helpers for component-level tests
 #include "../src/nuts/bip39.h"
+#include "../src/nuts/bip32.h"
 
 using namespace nutcpp;
 
@@ -18,6 +19,46 @@ static std::vector<uint8_t> get_seed() {
 }
 
 // ====================================================================
+// BIP-39: mnemonic_to_seed vector (DotNut Nut13Tests line 597-598)
+// ====================================================================
+
+TEST_CASE("BIP-39 mnemonic_to_seed produces correct seed", "[nut13][bip39]") {
+    auto seed = internal::mnemonic_to_seed(MNEMONIC);
+    REQUIRE(bytes_to_hex(seed.data(), seed.size()) ==
+        "dd44ee516b0647e80b488e8dcc56d736a148f15276bef588b37057476d4b2b25"
+        "780d3688a32b37353d6995997842c0fd8b412475c891c16310471fbc86dcbda8");
+}
+
+// ====================================================================
+// BIP-32: master key + path derivation (DotNut Bip32Test lines 573-585)
+// ====================================================================
+
+static const std::string BIP32_TEST_SEED_HEX =
+    "e4a964f4973ce5750a6a5a5126e8258442c197b2e71b683ccba58688f21242ea"
+    "e1b0f12bee21d6e983d4a5c61f081bf3f0669546eb576dec1b22ec8d481b00fb";
+
+TEST_CASE("BIP-32 master key from seed", "[nut13][bip32]") {
+    auto seed_bytes = hex_to_bytes(BIP32_TEST_SEED_HEX);
+    auto master = internal::bip32_master_key(seed_bytes.data(), seed_bytes.size());
+
+    REQUIRE(bytes_to_hex(master.private_key, 32) ==
+        "8d18d3f0cf9d74b53a935d97e8de85955ed9f6eefc6d6d45f0c169031a11b669");
+    REQUIRE(bytes_to_hex(master.chain_code, 32) ==
+        "5a876cc4b4ab2f6717951aee7f97ab69844dbffff7074e6e6f71d2ba04bd6ec9");
+}
+
+TEST_CASE("BIP-32 derive path m/0'/0/0", "[nut13][bip32]") {
+    auto seed_bytes = hex_to_bytes(BIP32_TEST_SEED_HEX);
+    auto derived = internal::bip32_derive_path("m/0'/0/0",
+        seed_bytes.data(), seed_bytes.size());
+
+    REQUIRE(bytes_to_hex(derived.private_key, 32) ==
+        "6144c1daf8222d6dab77e7a20c2f338519b83bd1423602c56c7dfb5e9ea99c02");
+    REQUIRE(bytes_to_hex(derived.chain_code, 32) ==
+        "55b36970e7ab8434f9b04f1c2e52da7422d2bce7e284ca353419dddfa2e34bdb");
+}
+
+// ====================================================================
 // get_keyset_id_int
 // ====================================================================
 
@@ -28,11 +69,9 @@ TEST_CASE("NUT-13 get_keyset_id_int v0 keyset", "[nut13]") {
 
 TEST_CASE("NUT-13 get_keyset_id_int v1 keyset truncates to 8 bytes", "[nut13]") {
     // v1 keyset IDs are longer; first 16 hex chars are used
+    // 0x015ba18a8adcd02e % 0x7FFFFFFF = 227808067
     KeysetId kid("015ba18a8adcd02e715a58358eb618da4a4b3791151a4bee5e968bb88406ccf76a");
-    uint32_t val = get_keyset_id_int(kid);
-    // Verify it's a valid result (truncated to 8 bytes, mod 2^31-1)
-    REQUIRE(val > 0);
-    REQUIRE(val < 0x7FFFFFFFUL);
+    REQUIRE(get_keyset_id_int(kid) == 227808067);
 }
 
 // ====================================================================
