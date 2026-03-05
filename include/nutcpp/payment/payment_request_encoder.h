@@ -7,7 +7,7 @@ namespace nutcpp::payment {
 
 // NUT-18: CBOR + base64url encoder for payment requests.
 // Produces "creqA" + base64url(CBOR(PaymentRequest)).
-// Also provides parse() which dispatches creqA (and creqB when available).
+// parse() dispatches creqA and creqB (via PaymentRequestBech32Encoder).
 class PaymentRequestEncoder {
 public:
     // Encode a PaymentRequest to "creqA..." string
@@ -16,7 +16,7 @@ public:
     // Decode base64url(CBOR) payload (without "creqA" prefix) to PaymentRequest
     static PaymentRequest decode(const std::string& payload);
 
-    // Parse any payment request format (creqA, creqB in future)
+    // Parse any payment request format (creqA or creqB)
     static PaymentRequest parse(const std::string& creq);
 };
 
