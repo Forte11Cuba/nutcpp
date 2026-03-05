@@ -3,6 +3,7 @@
 
 #include <sstream>
 #include <stdexcept>
+#include <limits>
 #include <unordered_set>
 #include <openssl/evp.h>
 #include <openssl/crypto.h>
@@ -28,8 +29,9 @@ static const unordered_set<string>& wordlist_set() {
     return s;
 }
 
-// Normalize mnemonic: trim, collapse whitespace, validate each word against BIP-39 English.
-// For English wordlist, no Unicode NFKD normalization is needed (all ASCII).
+// Normalize mnemonic: trim whitespace, validate word count and each word against BIP-39 English.
+// BIP-39 spec requires NFKD normalization, but English words are pure ASCII so NFKD is a no-op.
+// Non-ASCII passphrases would need NFKD — not supported (English-only, like DotNut).
 static string normalize_mnemonic(const string& mnemonic) {
     istringstream iss(mnemonic);
     string word;
@@ -51,7 +53,7 @@ static string normalize_mnemonic(const string& mnemonic) {
     istringstream iss2(result);
     while (iss2 >> word) {
         if (valid_words.find(word) == valid_words.end())
-            throw invalid_argument("invalid mnemonic word: " + word);
+            throw invalid_argument("mnemonic contains an invalid BIP-39 word");
     }
 
     return result;
@@ -70,6 +72,14 @@ vector<uint8_t> mnemonic_to_seed(const string& mnemonic,
 
     // Salt = "mnemonic" + passphrase (BIP-39 spec)
     string salt = "mnemonic" + passphrase;
+
+    // Guard size_t -> int narrowing (PKCS5_PBKDF2_HMAC takes int lengths)
+    if (normalized.size() > static_cast<size_t>(numeric_limits<int>::max()) ||
+        salt.size() > static_cast<size_t>(numeric_limits<int>::max())) {
+        secure_wipe(normalized);
+        secure_wipe(salt);
+        throw invalid_argument("mnemonic or passphrase too long");
+    }
 
     vector<uint8_t> seed(64);
     int ok = PKCS5_PBKDF2_HMAC(
