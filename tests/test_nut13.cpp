@@ -18,6 +18,10 @@ static std::vector<uint8_t> get_seed() {
     return internal::mnemonic_to_seed(MNEMONIC);
 }
 
+static std::string vec_to_hex(const std::vector<uint8_t>& v) {
+    return bytes_to_hex(v.data(), v.size());
+}
+
 // ====================================================================
 // BIP-39: mnemonic_to_seed vector (DotNut Nut13Tests line 597-598)
 // ====================================================================
@@ -108,15 +112,11 @@ TEST_CASE("NUT-13 v0 derive_blinding_factor counters 0-4", "[nut13]") {
     auto seed = get_seed();
     KeysetId kid("009a1f293253e41e");
 
-    auto to_hex = [](const std::vector<uint8_t>& v) {
-        return bytes_to_hex(v.data(), v.size());
-    };
-
-    REQUIRE(to_hex(derive_blinding_factor(seed, kid, 0)) == "ad00d431add9c673e843d4c2bf9a778a5f402b985b8da2d5550bf39cda41d679");
-    REQUIRE(to_hex(derive_blinding_factor(seed, kid, 1)) == "967d5232515e10b81ff226ecf5a9e2e2aff92d66ebc3edf0987eb56357fd6248");
-    REQUIRE(to_hex(derive_blinding_factor(seed, kid, 2)) == "b20f47bb6ae083659f3aa986bfa0435c55c6d93f687d51a01f26862d9b9a4899");
-    REQUIRE(to_hex(derive_blinding_factor(seed, kid, 3)) == "fb5fca398eb0b1deb955a2988b5ac77d32956155f1c002a373535211a2dfdc29");
-    REQUIRE(to_hex(derive_blinding_factor(seed, kid, 4)) == "5f09bfbfe27c439a597719321e061e2e40aad4a36768bb2bcc3de547c9644bf9");
+    REQUIRE(vec_to_hex(derive_blinding_factor(seed, kid, 0)) == "ad00d431add9c673e843d4c2bf9a778a5f402b985b8da2d5550bf39cda41d679");
+    REQUIRE(vec_to_hex(derive_blinding_factor(seed, kid, 1)) == "967d5232515e10b81ff226ecf5a9e2e2aff92d66ebc3edf0987eb56357fd6248");
+    REQUIRE(vec_to_hex(derive_blinding_factor(seed, kid, 2)) == "b20f47bb6ae083659f3aa986bfa0435c55c6d93f687d51a01f26862d9b9a4899");
+    REQUIRE(vec_to_hex(derive_blinding_factor(seed, kid, 3)) == "fb5fca398eb0b1deb955a2988b5ac77d32956155f1c002a373535211a2dfdc29");
+    REQUIRE(vec_to_hex(derive_blinding_factor(seed, kid, 4)) == "5f09bfbfe27c439a597719321e061e2e40aad4a36768bb2bcc3de547c9644bf9");
 }
 
 // ====================================================================
@@ -139,15 +139,11 @@ TEST_CASE("NUT-13 v1 derive_blinding_factor counters 0-4", "[nut13]") {
     auto seed = get_seed();
     KeysetId kid("015ba18a8adcd02e715a58358eb618da4a4b3791151a4bee5e968bb88406ccf76a");
 
-    auto to_hex = [](const std::vector<uint8_t>& v) {
-        return bytes_to_hex(v.data(), v.size());
-    };
-
-    REQUIRE(to_hex(derive_blinding_factor(seed, kid, 0)) == "6d26181a3695e32e9f88b80f039ba1ae2ab5a200ad4ce9dbc72c6d3769f2b035");
-    REQUIRE(to_hex(derive_blinding_factor(seed, kid, 1)) == "bde4354cee75545bea1a2eee035a34f2d524cee2bb01613823636e998386952e");
-    REQUIRE(to_hex(derive_blinding_factor(seed, kid, 2)) == "f40cc1218f085b395c8e1e5aaa25dccc851be3c6c7526a0f4e57108f12d6dac4");
-    REQUIRE(to_hex(derive_blinding_factor(seed, kid, 3)) == "099ed70fc2f7ac769bc20b2a75cb662e80779827b7cc358981318643030577d0");
-    REQUIRE(to_hex(derive_blinding_factor(seed, kid, 4)) == "5550337312d223ba62e3f75cfe2ab70477b046d98e3e71804eade3956c7b98cf");
+    REQUIRE(vec_to_hex(derive_blinding_factor(seed, kid, 0)) == "6d26181a3695e32e9f88b80f039ba1ae2ab5a200ad4ce9dbc72c6d3769f2b035");
+    REQUIRE(vec_to_hex(derive_blinding_factor(seed, kid, 1)) == "bde4354cee75545bea1a2eee035a34f2d524cee2bb01613823636e998386952e");
+    REQUIRE(vec_to_hex(derive_blinding_factor(seed, kid, 2)) == "f40cc1218f085b395c8e1e5aaa25dccc851be3c6c7526a0f4e57108f12d6dac4");
+    REQUIRE(vec_to_hex(derive_blinding_factor(seed, kid, 3)) == "099ed70fc2f7ac769bc20b2a75cb662e80779827b7cc358981318643030577d0");
+    REQUIRE(vec_to_hex(derive_blinding_factor(seed, kid, 4)) == "5550337312d223ba62e3f75cfe2ab70477b046d98e3e71804eade3956c7b98cf");
 }
 
 // ====================================================================
@@ -160,4 +156,12 @@ TEST_CASE("NUT-13 unsupported keyset version throws", "[nut13]") {
 
     REQUIRE_THROWS_AS(derive_secret(seed, kid, 0), std::invalid_argument);
     REQUIRE_THROWS_AS(derive_blinding_factor(seed, kid, 0), std::invalid_argument);
+}
+
+TEST_CASE("NUT-13 invalid seed length throws", "[nut13]") {
+    std::vector<uint8_t> short_seed(32, 0x42); // 32 bytes, not 64
+    KeysetId kid("009a1f293253e41e");
+
+    REQUIRE_THROWS_AS(derive_secret(short_seed, kid, 0), std::invalid_argument);
+    REQUIRE_THROWS_AS(derive_blinding_factor(short_seed, kid, 0), std::invalid_argument);
 }
