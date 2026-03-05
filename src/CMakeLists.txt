@@ -19,6 +19,7 @@ add_library(nutcpp
     nuts/bip32.cpp
     nuts/nut13.cpp
     payment/payment_request_encoder.cpp
+    payment/payment_request_bech32_encoder.cpp
     payment/bech32.cpp
     payment/nip19.cpp
 )

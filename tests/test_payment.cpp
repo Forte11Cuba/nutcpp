@@ -5,6 +5,7 @@
 #include "nutcpp/payment/payment_request.h"
 #include "nutcpp/payment/payment_request_payload.h"
 #include "nutcpp/payment/payment_request_encoder.h"
+#include "nutcpp/payment/payment_request_bech32_encoder.h"
 #include "../src/payment/bech32.h"
 #include "../src/payment/nip19.h"
 #include "nutcpp/encoding/convert_utils.h"
@@ -578,4 +579,287 @@ TEST_CASE("encode_nprofile no relays roundtrip matches DotNut vector", "[nip19]"
     auto decoded = decode_nprofile(expected);
     auto reencoded = encode_nprofile(decoded.pubkey, decoded.relays);
     REQUIRE(reencoded == expected);
+}
+
+// ====== PaymentRequestBech32Encoder (creqB / NUT-26) ======
+
+TEST_CASE("creqB Nut26_BasicPaymentRequest (DotNut vector, semantic roundtrip)", "[creqb]") {
+    std::string encoded =
+        "CREQB1QYQQSC3HVYUNQVFHXCPQQZQQQQQQQQQQQQ9QXQQPQQZSQ9MGW368QUE69UHNSVENXVH8XURPVDJN5VENXVUQWQREQYQQZQQZQQSGM6QFA3C8DTZ2FVZHVFQEACMWM0E50PE3K5TFMVPJJMN0VJ7M2TGRQQZSZMSZXYMSXQQHQ9EPGAMNWVAZ7TMJV4KXZ7FWV3SK6ATN9E5K7QCQRGQHY9MHWDEN5TE0WFJKCCTE9CURXVEN9EEHQCTRV5HSXQQSQ9EQ6AMNWVAZ7TMWDAEJUMR0DSRYDPGF";
+    auto d = PaymentRequestBech32Encoder::decode(encoded);
+    REQUIRE(d.payment_id.value() == "b7a90176");
+    REQUIRE(d.amount.value() == 10);
+    REQUIRE(d.unit.value() == "sat");
+    REQUIRE(d.mints.has_value());
+    REQUIRE(d.mints->size() == 1);
+    REQUIRE(d.mints->at(0) == "https://8333.space:3338");
+    REQUIRE(d.transports.size() == 1);
+    auto& t = d.transports[0];
+    REQUIRE(t.type == "nostr");
+    REQUIRE(t.target == "nprofile1qqsgm6qfa3c8dtz2fvzhvfqeacmwm0e50pe3k5tfmvpjjmn0vj7m2tgpz3mhxue69uhhyetvv9ujuerpd46hxtnfduq3wamnwvaz7tmjv4kxz7fw8qenxvewwdcxzcm99uqs6amnwvaz7tmwdaejumr0ds4ljh7n");
+    REQUIRE(t.tags.has_value());
+    REQUIRE(t.tags->size() == 1);
+    REQUIRE(t.tags->at(0).key == "n");
+    REQUIRE(t.tags->at(0).values[0] == "17");
+
+    // Semantic roundtrip (DotNut comments out exact equality for this vector)
+    auto encoded_again = PaymentRequestBech32Encoder::encode(d);
+    auto d2 = PaymentRequestBech32Encoder::decode(encoded_again);
+    REQUIRE(d2.payment_id.value() == d.payment_id.value());
+    REQUIRE(d2.amount.value() == d.amount.value());
+    REQUIRE(d2.unit.value() == d.unit.value());
+    REQUIRE(d2.mints.value() == d.mints.value());
+    REQUIRE(d2.transports[0].type == d.transports[0].type);
+    REQUIRE(d2.transports[0].target == d.transports[0].target);
+}
+
+TEST_CASE("creqB Nut26_NostrTransport (DotNut vector)", "[creqb]") {
+    std::string encoded =
+        "CREQB1QYQQSE3EXFSN2VTZ8QPQQZQQQQQQQQQQQPJQXQQPQQZSQXTGW368QUE69UHK66TWWSCJUETCV9KHQMR99E3K7MG9QQVKSAR5WPEN5TE0D45KUAPJ9EJHSCTDWPKX2TNRDAKSWQPEQYQQZQQZQQSQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQRQQZSZMSZXYMSXQQ8Q9HQGWFHXV6SCAGZ48";
+    auto d = PaymentRequestEncoder::parse(encoded);
+    REQUIRE(d.payment_id.value() == "f92a51b8");
+    REQUIRE(d.amount.value() == 100);
+    REQUIRE(d.unit.value() == "sat");
+    REQUIRE(d.mints->size() == 2);
+    REQUIRE(d.mints->at(0) == "https://mint1.example.com");
+    REQUIRE(d.mints->at(1) == "https://mint2.example.com");
+    REQUIRE(d.transports.size() == 1);
+    REQUIRE(d.transports[0].type == "nostr");
+    REQUIRE(d.transports[0].target == "nprofile1qqsqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq8uzqt");
+    REQUIRE(d.transports[0].tags->size() == 2);
+    REQUIRE(d.transports[0].tags->at(0).key == "n");
+    REQUIRE(d.transports[0].tags->at(0).values[0] == "17");
+    REQUIRE(d.transports[0].tags->at(1).key == "n");
+    REQUIRE(d.transports[0].tags->at(1).values[0] == "9735");
+
+    auto encoded_again = PaymentRequestBech32Encoder::encode(d);
+    REQUIRE(encoded_again == encoded);
+}
+
+TEST_CASE("creqB Nut26_MinimalPaymentRequest (DotNut vector)", "[creqb]") {
+    std::string encoded = "CREQB1QYQQSDMXX3SNYC3N8YPSQQGQQ5QPS6R5W3C8XW309AKKJMN59EJHSCTDWPKX2TNRDAKSYP0LHG";
+    auto d = PaymentRequestEncoder::parse(encoded);
+    REQUIRE(d.payment_id.value() == "7f4a2b39");
+    REQUIRE(d.unit.value() == "sat");
+    REQUIRE(d.mints->size() == 1);
+    REQUIRE(d.mints->at(0) == "https://mint.example.com");
+    REQUIRE_FALSE(d.amount.has_value());
+
+    auto encoded_again = PaymentRequestBech32Encoder::encode(d);
+    REQUIRE(encoded_again == encoded);
+}
+
+TEST_CASE("creqB Nut26_Nut10Lock (DotNut vector)", "[creqb]") {
+    std::string encoded =
+        "CREQB1QYQQSCEEV56R2EPJVYPQQZQQQQQQQQQQQ86QXQQPQQZSQXRGW368QUE69UHK66TWWSHX27RPD4CXCEFWVDHK6ZQQTYQSQQGQQGQYYVPJVVEKYDTZVGERWEFNXCCNGDFHVVUNYEPEXDJRWWRYVSMNXEPNVS6NXDENXGCNZVRZXF3KVEFCVG6NQENZVVCXZCNRXCCN2EFEVVENXVGRQQXSWARFD4JK7AT5QSENVVPS2N5FAS";
+    auto d = PaymentRequestEncoder::parse(encoded);
+    REQUIRE(d.payment_id.value() == "c9e45d2a");
+    REQUIRE(d.amount.value() == 500);
+    REQUIRE(d.unit.value() == "sat");
+    REQUIRE(d.mints->at(0) == "https://mint.example.com");
+    REQUIRE(d.nut10.has_value());
+    REQUIRE(d.nut10->kind == "P2PK");
+    REQUIRE(d.nut10->data == "02c3b5bb27e361457c92d93d78dd73d3d53732110b2cfe8b50fbc0abc615e9c331");
+    REQUIRE(d.nut10->tags->size() == 1);
+    REQUIRE(d.nut10->tags->at(0).key == "timeout");
+    REQUIRE(d.nut10->tags->at(0).values[0] == "3600");
+
+    auto encoded_again = PaymentRequestBech32Encoder::encode(d);
+    REQUIRE(encoded_again == encoded);
+}
+
+TEST_CASE("creqB Nut26HttpPostTransport (DotNut vector)", "[creqb]") {
+    std::string encoded =
+        "CREQB1QYQQJ6R5W3C97AR9WD6QYQQGQQQQQQQQQQQ05QCQQYQQ2QQCDP68GURN8GHJ7MTFDE6ZUETCV9KHQMR99E3K7MG8QPQSZQQPQYPQQGNGW368QUE69UHKZURF9EJHSCTDWPKX2TNRDAKJ7A339ACXZ7TDV4H8GQCQZ5RXXATNW3HK6PNKV9K82EF3QEMXZMR4V5EQ9X3SJM";
+    auto d = PaymentRequestEncoder::parse(encoded);
+    REQUIRE(d.payment_id.value() == "http_test");
+    REQUIRE(d.amount.value() == 250);
+    REQUIRE(d.unit.value() == "sat");
+    REQUIRE(d.mints->at(0) == "https://mint.example.com");
+    REQUIRE(d.transports.size() == 1);
+    REQUIRE(d.transports[0].type == "post");
+    REQUIRE(d.transports[0].target == "https://api.example.com/v1/payment");
+    REQUIRE(d.transports[0].tags->size() == 1);
+    REQUIRE(d.transports[0].tags->at(0).key == "custom");
+    REQUIRE(d.transports[0].tags->at(0).values.size() == 2);
+    REQUIRE(d.transports[0].tags->at(0).values[0] == "value1");
+    REQUIRE(d.transports[0].tags->at(0).values[1] == "value2");
+
+    auto encoded_again = PaymentRequestBech32Encoder::encode(d);
+    REQUIRE(encoded_again == encoded);
+}
+
+TEST_CASE("creqB Nut26Nprofile with 3 relays (DotNut vector)", "[creqb]") {
+    std::string encoded =
+        "CREQB1QYQQ5UN9D3SHJHM5V4EHGQSQPQQQQQQQQQQQQEQRQQQSQPGQRP58GARSWVAZ7TMDD9H8GTN90PSK6URVV5HXXMMDQUQGZQGQQYQQYQPQ80CVV07TJDRRGPA0J7J7TMNYL2YR6YR7L8J4S3EVF6U64TH6GKWSXQQMQ9EPSAMNWVAZ7TMJV4KXZ7F39EJHSCTDWPKX2TNRDAKSXQQMQ9EPSAMNWVAZ7TMJV4KXZ7FJ9EJHSCTDWPKX2TNRDAKSXQQMQ9EPSAMNWVAZ7TMJV4KXZ7FN9EJHSCTDWPKX2TNRDAKSKRFDAR";
+    auto d = PaymentRequestEncoder::parse(encoded);
+    REQUIRE(d.payment_id.value() == "relay_test");
+    REQUIRE(d.amount.value() == 100);
+    REQUIRE(d.unit.value() == "sat");
+    REQUIRE(d.mints->at(0) == "https://mint.example.com");
+    REQUIRE(d.transports.size() == 1);
+    REQUIRE(d.transports[0].type == "nostr");
+    REQUIRE(d.transports[0].target == "nprofile1qqsrhuxx8l9ex335q7he0f09aej04zpazpl0ne2cgukyawd24mayt8gprpmhxue69uhhyetvv9unztn90psk6urvv5hxxmmdqyv8wumn8ghj7un9d3shjv3wv4uxzmtsd3jjucm0d5q3samnwvaz7tmjv4kxz7fn9ejhsctdwpkx2tnrdaksxzjpjp");
+
+    auto encoded_again = PaymentRequestBech32Encoder::encode(d);
+    REQUIRE(encoded_again == encoded);
+}
+
+TEST_CASE("creqB Nut26_Description (DotNut vector)", "[creqb]") {
+    std::string encoded = "CREQB1QYQQJER9WD347AR9WD6QYQQGQQQQQQQQQQQXGQCQQYQQ2QQCDP68GURN8GHJ7MTFDE6ZUETCV9KHQMR99E3K7MGXQQV9GETNWSS8QCTED4JKUAPQV3JHXCMJD9C8G6T0DCFLJJRX";
+    auto d = PaymentRequestEncoder::parse(encoded);
+    REQUIRE(d.payment_id.value() == "desc_test");
+    REQUIRE(d.amount.value() == 100);
+    REQUIRE(d.unit.value() == "sat");
+    REQUIRE(d.mints->at(0) == "https://mint.example.com");
+    REQUIRE(d.description.value() == "Test payment description");
+
+    auto encoded_again = PaymentRequestBech32Encoder::encode(d);
+    REQUIRE(encoded_again == encoded);
+}
+
+TEST_CASE("creqB Nut26_SingleUseTrue (DotNut vector)", "[creqb]") {
+    std::string encoded =
+        "CREQB1QYQQ7UMFDENKCE2LW4EK2HM5WF6K2QSQPQQQQQQQQQQQQEQRQQQSQPQQQYQS2QQCDP68GURN8GHJ7MTFDE6ZUETCV9KHQMR99E3K7MGX0AYM7";
+    auto d = PaymentRequestEncoder::parse(encoded);
+    REQUIRE(d.payment_id.value() == "single_use_true");
+    REQUIRE(d.amount.value() == 100);
+    REQUIRE(d.unit.value() == "sat");
+    REQUIRE(d.single_use.has_value());
+    REQUIRE(d.single_use.value() == true);
+    REQUIRE(d.mints->at(0) == "https://mint.example.com");
+
+    auto encoded_again = PaymentRequestBech32Encoder::encode(d);
+    REQUIRE(encoded_again == encoded);
+}
+
+TEST_CASE("creqB Nut26_SingleUseFalse (DotNut vector)", "[creqb]") {
+    std::string encoded =
+        "CREQB1QYQPQUMFDENKCE2LW4EK2HMXV9K8XEGZQQYQQQQQQQQQQQRYQVQQZQQYQQQSQPGQRP58GARSWVAZ7TMDD9H8GTN90PSK6URVV5HXXMMDQ40L90";
+    auto d = PaymentRequestEncoder::parse(encoded);
+    REQUIRE(d.payment_id.value() == "single_use_false");
+    REQUIRE(d.amount.value() == 100);
+    REQUIRE(d.unit.value() == "sat");
+    REQUIRE(d.single_use.has_value());
+    REQUIRE(d.single_use.value() == false);
+    REQUIRE(d.mints->at(0) == "https://mint.example.com");
+
+    auto encoded_again = PaymentRequestBech32Encoder::encode(d);
+    REQUIRE(encoded_again == encoded);
+}
+
+TEST_CASE("creqB Nut26_MsatUnit (DotNut vector)", "[creqb]") {
+    std::string encoded =
+        "CREQB1QYQQJATWD9697MTNV96QYQQGQQQQQQQQQQP7SQCQQ3KHXCT5Q5QPS6R5W3C8XW309AKKJMN59EJHSCTDWPKX2TNRDAKSYYMU95";
+    auto d = PaymentRequestEncoder::parse(encoded);
+    REQUIRE(d.payment_id.value() == "unit_msat");
+    REQUIRE(d.amount.value() == 1000);
+    REQUIRE(d.unit.value() == "msat");
+    REQUIRE(d.mints->at(0) == "https://mint.example.com");
+
+    auto encoded_again = PaymentRequestBech32Encoder::encode(d);
+    REQUIRE(encoded_again == encoded);
+}
+
+TEST_CASE("creqB Nut26_UsdUnit (DotNut vector)", "[creqb]") {
+    std::string encoded =
+        "CREQB1QYQQSATWD9697ATNVSPQQZQQQQQQQQQQQ86QXQQRW4EKGPGQRP58GARSWVAZ7TMDD9H8GTN90PSK6URVV5HXXMMDEPCJYC";
+    auto d = PaymentRequestEncoder::parse(encoded);
+    REQUIRE(d.payment_id.value() == "unit_usd");
+    REQUIRE(d.amount.value() == 500);
+    REQUIRE(d.unit.value() == "usd");
+    REQUIRE(d.mints->at(0) == "https://mint.example.com");
+
+    auto encoded_again = PaymentRequestBech32Encoder::encode(d);
+    REQUIRE(encoded_again == encoded);
+}
+
+TEST_CASE("creqB Nut26_MultipleTransports (DotNut vector)", "[creqb]") {
+    std::string encoded =
+        "CREQB1QYQQ7MT4D36XJHM5WFSKUUMSDAE8GQSQPQQQQQQQQQQQRAQRQQQSQPGQRP58GARSWVAZ7TMDD9H8GTN90PSK6URVV5HXXMMDQCQZQ5RP09KK2MN5YPMKJARGYPKH2MR5D9CXCEFQW3EXZMNNWPHHYARNQUQZ7QGQQYQQYQPQ80CVV07TJDRRGPA0J7J7TMNYL2YR6YR7L8J4S3EVF6U64TH6GKWSXQQ9Q9HQYVFHQUQZWQGQQYQSYQPQDP68GURN8GHJ7CTSDYCJUETCV9KHQMR99E3K7MF0WPSHJMT9DE6QWQP6QYQQZQGZQQSXSAR5WPEN5TE0V9CXJV3WV4UXZMTSD3JJUCM0D5HHQCTED4JKUAQRQQGQSURJD9HHY6T50YRXYCTRDD6HQTSH7TP";
+    auto d = PaymentRequestEncoder::parse(encoded);
+    REQUIRE(d.payment_id.value() == "multi_transport");
+    REQUIRE(d.amount.value() == 500);
+    REQUIRE(d.unit.value() == "sat");
+    REQUIRE(d.mints->at(0) == "https://mint.example.com");
+    REQUIRE(d.transports.size() == 3);
+
+    REQUIRE(d.transports[0].type == "nostr");
+    REQUIRE(d.transports[0].target == "nprofile1qqsrhuxx8l9ex335q7he0f09aej04zpazpl0ne2cgukyawd24mayt8g2lcy6q");
+    REQUIRE(d.transports[0].tags->at(0).key == "n");
+    REQUIRE(d.transports[0].tags->at(0).values[0] == "17");
+
+    REQUIRE(d.transports[1].type == "post");
+    REQUIRE(d.transports[1].target == "https://api1.example.com/payment");
+
+    REQUIRE(d.transports[2].type == "post");
+    REQUIRE(d.transports[2].tags->at(0).key == "priority");
+    REQUIRE(d.transports[2].tags->at(0).values[0] == "backup");
+
+    auto encoded_again = PaymentRequestBech32Encoder::encode(d);
+    REQUIRE(encoded_again == encoded);
+}
+
+TEST_CASE("creqB Nut26MinimalNostrTransport (DotNut vector)", "[creqb]") {
+    std::string encoded =
+        "CREQB1QYQQ6MTFDE5K6CTVTAHX7UM5WGPSQQGQQ5QPS6R5W3C8XW309AKKJMN59EJHSCTDWPKX2TNRDAKSWQP8QYQQZQQZQQSRHUXX8L9EX335Q7HE0F09AEJ04ZPAZPL0NE2CGUKYAWD24MAYT8G7QNXMQ";
+    auto d = PaymentRequestEncoder::parse(encoded);
+    REQUIRE(d.payment_id.value() == "minimal_nostr");
+    REQUIRE(d.unit.value() == "sat");
+    REQUIRE(d.mints->at(0) == "https://mint.example.com");
+    REQUIRE(d.transports.size() == 1);
+    REQUIRE(d.transports[0].type == "nostr");
+    REQUIRE(d.transports[0].target == "nprofile1qqsrhuxx8l9ex335q7he0f09aej04zpazpl0ne2cgukyawd24mayt8g2lcy6q");
+
+    auto encoded_again = PaymentRequestBech32Encoder::encode(d);
+    REQUIRE(encoded_again == encoded);
+}
+
+TEST_CASE("creqB Nut26MinimalPostTransport (DotNut vector)", "[creqb]") {
+    std::string encoded = "CREQB1QYQQCMTFDE5K6CTVTA58GARSQVQQZQQ9QQVXSAR5WPEN5TE0D45KUAPWV4UXZMTSD3JJUCM0D5RSQ8SPQQQSZQSQZA58GARSWVAZ7TMPWP5JUETCV9KHQMR99E3K7MG0TWYGX";
+    auto d = PaymentRequestEncoder::parse(encoded);
+    REQUIRE(d.payment_id.value() == "minimal_http");
+    REQUIRE(d.unit.value() == "sat");
+    REQUIRE(d.mints->at(0) == "https://mint.example.com");
+    REQUIRE(d.transports.size() == 1);
+    REQUIRE(d.transports[0].type == "post");
+    REQUIRE(d.transports[0].target == "https://api.example.com");
+
+    auto encoded_again = PaymentRequestBech32Encoder::encode(d);
+    REQUIRE(encoded_again == encoded);
+}
+
+TEST_CASE("creqB Nut26Nut10HTLC (DotNut vector)", "[creqb]") {
+    std::string encoded =
+        "CREQB1QYQQJ6R5D3347AR9WD6QYQQGQQQQQQQQQQP7SQCQQYQQ2QQCDP68GURN8GHJ7MTFDE6ZUETCV9KHQMR99E3K7MGXQQF5S4ZVGVSXCMMRDDJKGGRSV9UK6ETWWSYQPTGPQQQSZQSQGFS46VR9XCMRSV3SVFNXYDP3XGERZVNRVCMKZC3NV3JKYVP5X5UKXEFJ8QEXZVTZXQ6XVERPXUMX2CFKXQERVCFKXAJNGVTPV5ERVE3NV33SXQQ5PPKX7CMTW35K6EG2XYMNQVPSXQCRQVPSQVQY5PNJV4N82MNYGGCRXVEJ8QCKXVEHXCMNWETPXGMNXETZXUCNSVMZXUURXVPKXANR2V35XSUNXVM9VCMNSEPCVVEKVVF4VGCKZDEHVD3RYDPKXQUNJCEJXEJS4EHJHC";
+    auto d = PaymentRequestEncoder::parse(encoded);
+    REQUIRE(d.payment_id.value() == "htlc_test");
+    REQUIRE(d.amount.value() == 1000);
+    REQUIRE(d.unit.value() == "sat");
+    REQUIRE(d.mints->at(0) == "https://mint.example.com");
+    REQUIRE(d.description.value() == "HTLC locked payment");
+    REQUIRE(d.nut10.has_value());
+    REQUIRE(d.nut10->kind == "HTLC");
+    REQUIRE(d.nut10->data == "a]0e66820bfb412212cf7ab3deb0459ce282a1b04fda76ea6026a67e41ae26f3dc");
+    REQUIRE(d.nut10->tags->size() == 2);
+    REQUIRE(d.nut10->tags->at(0).key == "locktime");
+    REQUIRE(d.nut10->tags->at(0).values[0] == "1700000000");
+    REQUIRE(d.nut10->tags->at(1).key == "refund");
+    REQUIRE(d.nut10->tags->at(1).values[0] == "033281c37677ea273eb7183b783067f5244933ef78d8c3f15b1a77cb246099c26e");
+
+    auto encoded_again = PaymentRequestBech32Encoder::encode(d);
+    REQUIRE(encoded_again == encoded);
+}
+
+TEST_CASE("creqB Nut26CustomCurrencyUnit (DotNut vector)", "[creqb]") {
+    std::string encoded =
+        "CREQB1QYQQKCM4WD6X7M2LW4HXJAQZQQYQQQQQQQQQQQRYQVQQXCN5VVZSQXRGW368QUE69UHK66TWWSHX27RPD4CXCEFWVDHK6PZHCW8";
+    auto d = PaymentRequestEncoder::parse(encoded);
+    REQUIRE(d.payment_id.value() == "custom_unit");
+    REQUIRE(d.amount.value() == 100);
+    REQUIRE(d.unit.value() == "btc");
+    REQUIRE(d.mints->at(0) == "https://mint.example.com");
+
+    auto encoded_again = PaymentRequestBech32Encoder::encode(d);
+    REQUIRE(encoded_again == encoded);
 }

@@ -1,4 +1,5 @@
 #include "nutcpp/payment/payment_request_encoder.h"
+#include "nutcpp/payment/payment_request_bech32_encoder.h"
 #include "nutcpp/encoding/base64_url.h"
 #include <nlohmann/json.hpp>
 #include <stdexcept>
@@ -156,9 +157,8 @@ PaymentRequest PaymentRequestEncoder::parse(const string& creq) {
         return decode(creq.substr(5));
     }
 
-    // creqB will be handled here in PR 7d
     if (starts_with_ci(creq, "creqb1")) {
-        throw invalid_argument("Bech32m payment requests (creqB) not yet implemented");
+        return PaymentRequestBech32Encoder::decode(creq);
     }
 
     throw invalid_argument("Invalid payment request format");
