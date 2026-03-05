@@ -169,6 +169,8 @@ BIP32Key bip32_derive_path(const string& path,
         explicit_bzero(key.private_key, 32);
         explicit_bzero(key.chain_code, 32);
         key = child;
+        explicit_bzero(child.private_key, 32);
+        explicit_bzero(child.chain_code, 32);
     }
 
     return key;
