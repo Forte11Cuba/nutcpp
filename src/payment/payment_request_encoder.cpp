@@ -156,8 +156,8 @@ PaymentRequest PaymentRequestEncoder::parse(const string& creq) {
         return decode(creq.substr(5));
     }
 
-    // creqB will be handled here in PR 7e
-    if (starts_with_ci(creq, "creqb1") || starts_with_ci(creq, "CREQB1")) {
+    // creqB will be handled here in PR 7d
+    if (starts_with_ci(creq, "creqb1")) {
         throw invalid_argument("Bech32m payment requests (creqB) not yet implemented");
     }
 
