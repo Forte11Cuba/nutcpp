@@ -17,6 +17,7 @@ add_library(nutcpp
     nuts/p2bk.cpp
     nuts/bip39.cpp
     nuts/bip32.cpp
+    nuts/nut13.cpp
 )
 
 target_include_directories(nutcpp
