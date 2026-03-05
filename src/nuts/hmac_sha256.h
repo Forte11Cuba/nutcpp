@@ -45,7 +45,14 @@ inline std::vector<unsigned char> hmac_sha256(const unsigned char* key, size_t k
     SHA256 outer;
     outer.update(opad, BLOCK_SIZE);
     outer.update(inner_hash.data(), inner_hash.size());
-    return outer.finalize();
+    auto result = outer.finalize();
+
+    // Wipe key-derived material from stack
+    explicit_bzero(k_prime, BLOCK_SIZE);
+    explicit_bzero(ipad, BLOCK_SIZE);
+    explicit_bzero(opad, BLOCK_SIZE);
+
+    return result;
 }
 
 } // namespace internal
