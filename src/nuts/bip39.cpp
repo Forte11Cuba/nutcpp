@@ -133,8 +133,10 @@ vector<uint8_t> mnemonic_to_seed(const string& mnemonic,
     string normalized = normalize_mnemonic(mnemonic);
 
     // Validate BIP-39 checksum
-    if (!validate_mnemonic_checksum(normalized))
+    if (!validate_mnemonic_checksum(normalized)) {
+        secure_wipe(normalized);
         throw invalid_argument("mnemonic has invalid BIP-39 checksum");
+    }
 
     // Salt = "mnemonic" + passphrase (BIP-39 spec)
     string salt = "mnemonic" + passphrase;
