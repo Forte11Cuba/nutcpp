@@ -11,6 +11,7 @@ add_executable(nutcpp_tests
     test_sig_all.cpp
     test_p2bk.cpp
     test_nut13.cpp
+    test_payment.cpp
 )
 
 target_link_libraries(nutcpp_tests
