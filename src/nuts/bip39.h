@@ -12,9 +12,15 @@ namespace internal {
 
 // Derives a 64-byte seed from a BIP-39 mnemonic phrase.
 // Uses PBKDF2-HMAC-SHA512 with salt = "mnemonic" + passphrase, 2048 iterations.
-// Throws std::invalid_argument if mnemonic is empty or has invalid word count.
+// Validates word count, each word against BIP-39 English, and checksum.
+// Throws std::invalid_argument if mnemonic is invalid.
 std::vector<uint8_t> mnemonic_to_seed(const std::string& mnemonic,
                                        const std::string& passphrase = "");
+
+// Validates the BIP-39 checksum embedded in the mnemonic.
+// Returns true if the last CS bits match SHA-256(entropy).
+// Returns false if words are invalid or checksum doesn't match.
+bool validate_mnemonic_checksum(const std::string& mnemonic);
 
 } // namespace internal
 } // namespace nutcpp
