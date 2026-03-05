@@ -3,6 +3,7 @@
 #include <string>
 #include <vector>
 #include <optional>
+#include <utility>
 #include <nlohmann/json.hpp>
 #include "nutcpp/types/tag.h"
 

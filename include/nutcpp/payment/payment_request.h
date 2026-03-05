@@ -12,7 +12,7 @@ namespace nutcpp::payment {
 
 // NUT-18: Payment request — supplies a sending wallet with all information
 // necessary to complete a transaction.
-// JSON keys: "i", "a", "u", "s", "m", "d", "t", "nut10" (all optional)
+// JSON keys: "i", "a", "u", "s", "m", "d", "nut10" (optional), "t" (always present)
 struct PaymentRequest {
     std::optional<std::string> payment_id;       // "i"
     std::optional<uint64_t> amount;              // "a"
