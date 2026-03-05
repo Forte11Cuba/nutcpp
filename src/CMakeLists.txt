@@ -18,6 +18,7 @@ add_library(nutcpp
     nuts/bip39.cpp
     nuts/bip32.cpp
     nuts/nut13.cpp
+    payment/payment_request_encoder.cpp
 )
 
 target_include_directories(nutcpp
