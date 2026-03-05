@@ -14,6 +14,7 @@ add_library(nutcpp
     nuts/p2pk.cpp
     nuts/htlc.cpp
     nuts/sig_all.cpp
+    nuts/p2bk.cpp
 )
 
 target_include_directories(nutcpp
