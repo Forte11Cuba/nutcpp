@@ -8,27 +8,47 @@
 #include <openssl/evp.h>
 #include <secp256k1.h>
 
+#ifdef __linux__
+#include <sys/random.h>
+#elif defined(__APPLE__)
+#include <Security/SecRandom.h>
+#elif defined(_WIN32)
+#include <bcrypt.h>
+#pragma comment(lib, "bcrypt")
+#else
+#error "No secure random source available for this platform"
+#endif
+
 using namespace std;
 
 namespace nutcpp {
 namespace internal {
 
+static void fill_random(unsigned char* buf, size_t len) {
+#ifdef __linux__
+    ssize_t ret = getrandom(buf, len, 0);
+    if (ret < 0 || static_cast<size_t>(ret) != len)
+        throw runtime_error("getrandom() failed");
+#elif defined(__APPLE__)
+    if (SecRandomCopyBytes(kSecRandomDefault, len, buf) != errSecSuccess)
+        throw runtime_error("SecRandomCopyBytes() failed");
+#elif defined(_WIN32)
+    if (BCryptGenRandom(NULL, buf, static_cast<ULONG>(len),
+                        BCRYPT_USE_SYSTEM_PREFERRED_RNG) != 0)
+        throw runtime_error("BCryptGenRandom() failed");
+#endif
+}
+
 static secp256k1_context* get_context() {
     static secp256k1_context* ctx = [] {
         auto* c = secp256k1_context_create(SECP256K1_CONTEXT_SIGN | SECP256K1_CONTEXT_VERIFY);
-        unsigned char rng_seed[32];
-        FILE* f = fopen("/dev/urandom", "rb");
-        if (f) {
-            size_t read = fread(rng_seed, 1, 32, f);
-            fclose(f);
-            if (read == 32) {
-                if (!secp256k1_context_randomize(c, rng_seed)) {
-                    secp256k1_context_destroy(c);
-                    throw runtime_error("secp256k1_context_randomize failed");
-                }
-            }
-            explicit_bzero(rng_seed, 32);
+        unsigned char seed[32];
+        fill_random(seed, 32);
+        if (!secp256k1_context_randomize(c, seed)) {
+            secp256k1_context_destroy(c);
+            throw runtime_error("secp256k1_context_randomize failed");
         }
+        explicit_bzero(seed, 32);
         return c;
     }();
     return ctx;
@@ -129,7 +149,10 @@ static vector<pair<uint32_t, bool>> parse_path(const string& path) {
         }
         if (segment.empty())
             throw invalid_argument("BIP32 path has empty segment");
-        uint32_t index = static_cast<uint32_t>(stoul(segment));
+        unsigned long val = stoul(segment);
+        if (val >= 0x80000000UL)
+            throw invalid_argument("BIP32 index must be < 2^31");
+        uint32_t index = static_cast<uint32_t>(val);
         result.push_back({index, hardened});
     }
 
