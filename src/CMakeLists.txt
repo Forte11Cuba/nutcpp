@@ -50,3 +50,8 @@ target_compile_definitions(nutcpp
     PRIVATE
         CPPHTTPLIB_OPENSSL_SUPPORT
 )
+
+# Windows: bcrypt needed for BCryptGenRandom (p2pk.cpp, p2bk.cpp, blinding_helper.cpp)
+if(WIN32)
+    target_link_libraries(nutcpp PRIVATE bcrypt)
+endif()
