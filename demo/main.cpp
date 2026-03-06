@@ -215,7 +215,18 @@ static void fetch_mint_info(ScreenInteractive* screen, std::string url) {
         }
 
         // Clear deposit/wallet state from previous mint
-        g_deposit = DepositLNState{};
+        // Reset selectively — do NOT touch amount_input (bound to FTXUI Input on UI thread)
+        g_deposit.loading = false;
+        g_deposit.error.clear();
+        g_deposit.status_msg.clear();
+        g_deposit.has_quote = false;
+        g_deposit.quote_amount = 0;
+        g_deposit.quote_id.clear();
+        g_deposit.invoice.clear();
+        g_deposit.quote_state.clear();
+        g_deposit.has_proofs = false;
+        g_deposit.minted_proofs.clear();
+        g_deposit.minted_total = 0;
         g_wallet_proofs.clear();
 
         g_mint_url = url;
@@ -581,9 +592,15 @@ int main() {
     // Deposit LN input + buttons
     auto deposit_amount_input = Input(&g_deposit.amount_input, "100");
 
-    auto invoice_input_option = InputOption::Default();
-    invoice_input_option.multiline = false;
-    auto deposit_invoice_input = Input(&g_deposit.invoice, "", invoice_input_option);
+    // Read-only renderer for invoice — avoids data race with worker thread
+    auto deposit_invoice_view = Renderer([&] {
+        std::string invoice;
+        {
+            std::lock_guard<std::mutex> lock(g_mutex);
+            invoice = g_deposit.invoice;
+        }
+        return text(invoice);
+    });
 
     auto create_quote_button = Button("Create Quote", [&] {
         bool can_start = false;
@@ -646,7 +663,7 @@ int main() {
             check_status_button,
         }),
         Container::Horizontal({
-            deposit_invoice_input,
+            deposit_invoice_view,
             copy_invoice_button,
         }),
     });
@@ -736,7 +753,7 @@ int main() {
             if (has_quote) {
                 deposit_elements.push_back(
                     hbox({text("Invoice: ") | bold,
-                          deposit_invoice_input->Render() | flex,
+                          deposit_invoice_view->Render() | flex,
                           text(" "),
                           copy_invoice_button->Render()}) );
                 deposit_elements.push_back(separator());
