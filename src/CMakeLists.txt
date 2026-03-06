@@ -10,6 +10,7 @@ add_library(nutcpp
     api/cashu_http_client.cpp
     wallet/fee_helper.cpp
     wallet/proof_selector.cpp
+    wallet/blinding_helper.cpp
     nuts/nut10_secret.cpp
     nuts/p2pk.cpp
     nuts/htlc.cpp

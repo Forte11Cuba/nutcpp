@@ -12,6 +12,7 @@ add_executable(nutcpp_tests
     test_p2bk.cpp
     test_nut13.cpp
     test_payment.cpp
+    test_blinding_helper.cpp
 )
 
 target_link_libraries(nutcpp_tests
