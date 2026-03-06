@@ -26,6 +26,41 @@
 using namespace ftxui;
 
 // ============================================================
+// Cashu glasses logo (pixel art)
+// ============================================================
+
+static Element render_logo() {
+    // X = glasses pixel (black), B = reflection pixel (white), space = purple bg
+    // Padded with 1 char purple on each side + 1 full purple row top/bottom
+    static const std::vector<std::string> art = {
+        "                                ",  // top purple row
+        " XXXXXXXXXXXXXXXXXXXXXXXXXXXXXX ",
+        "  XXBXBXXXXXXXX  XXXBXBXXXXXXXX ",
+        "   XXBXBXXXXXXX  XXXXBXBXXXXXX  ",
+        "    XXBXBXXXX     XXXXBXBXXXX   ",
+        "     XXXXXXX       XXXXXXXXX    ",
+        "                                ",  // bottom purple row
+    };
+
+    auto purple = Color(147, 51, 234);
+
+    Elements lines;
+    for (auto& row : art) {
+        Elements chars;
+        for (char c : row) {
+            if (c == 'X')
+                chars.push_back(text(" ") | bgcolor(Color::Black));
+            else if (c == 'B')
+                chars.push_back(text(" ") | bgcolor(Color::White));
+            else
+                chars.push_back(text(" ") | bgcolor(purple));
+        }
+        lines.push_back(hbox(std::move(chars)));
+    }
+    return vbox(std::move(lines));
+}
+
+// ============================================================
 // Menu definition
 // ============================================================
 
@@ -933,12 +968,13 @@ int main() {
 
         Element left_panel = vbox({
             left_title,
+            render_logo() | hcenter,
             separator(),
             menu_el,
             separator(),
             esc_hint,
         });
-        left_panel = left_panel | border | size(WIDTH, EQUAL, 22);
+        left_panel = left_panel | border | size(WIDTH, EQUAL, 34);
 
         // Right panel content
         Element content;
