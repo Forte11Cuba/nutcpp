@@ -274,7 +274,7 @@ Select an amount, swap for exact change, and get a shareable cashuA/cashuB token
 
 ## Project Structure
 
-```
+```text
 nutcpp/
 ├── include/nutcpp/           # Public headers
 │   ├── types/                # PubKey, PrivKey, Proof, Token, Keyset, etc.
