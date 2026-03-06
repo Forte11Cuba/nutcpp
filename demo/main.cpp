@@ -10,6 +10,7 @@
 #include <atomic>
 #include <algorithm>
 #include <numeric>
+#include <set>
 #include <cstdio>
 #include <cinttypes>
 
@@ -75,14 +76,14 @@ struct MenuItem {
 static const std::vector<MenuItem> menu_items = {
     {"Mint Info",        "Mint Information (NUT-06)",           false},
     {"Deposit LN",       "Deposit Lightning (NUT-04)",          false},
-    {"Withdraw LN",      "Withdraw Lightning (NUT-05)",         false},
+    {"Withdraw LN",      "Withdraw Lightning (NUT-05)",         true},
     {"Receive eCash",    "Receive eCash",                       false},
-    {"Send eCash",       "Send eCash",                          false},
+    {"Send eCash",       "Send eCash",                          true},
     {"Token Inspector",  "Token Inspector (NUT-00)",            false},
     {"Wallet",           "Wallet",                              false},
-    {"Check States",     "Check States (NUT-07)",               false},
-    {"Swap",             "Swap (NUT-03)",                       false},
-    {"Secrets",          "Secrets (NUT-10)",                    false},
+    {"Check States",     "Check States (NUT-07)",               true},
+    {"Swap",             "Swap (NUT-03)",                       true},
+    {"Secrets",          "Secrets (NUT-10)",                    true},
     {"NUT-13",           "Deterministic Secrets (NUT-13)",      true},
     {"P2PK / HTLC",      "Spending Conditions (NUT-11/14)",     true},
     {"Payment Request",  "Payment Requests (NUT-18/26)",        true},
@@ -172,9 +173,14 @@ struct DepositLNState {
     std::string error;
     std::string status_msg;
 
+    // Unit selection
+    std::vector<std::string> available_units;
+    int selected_unit_index = 0;
+
     // Quote
     bool has_quote = false;
     uint64_t quote_amount = 0;
+    std::string quote_unit;
     std::string quote_id;
     std::string invoice;
     std::string quote_state;
@@ -311,6 +317,22 @@ static void fetch_mint_info(ScreenInteractive* screen, std::string url) {
             }
         }
 
+        // Discover available units from active keysets
+        std::set<std::string> units_set;
+        for (auto& ki : g_keys_items) {
+            if (ki.active.value_or(false))
+                units_set.insert(ki.unit);
+        }
+        g_deposit.available_units.assign(units_set.begin(), units_set.end());
+        g_deposit.selected_unit_index = 0;
+        // Default to "sat" if available
+        for (int i = 0; i < static_cast<int>(g_deposit.available_units.size()); i++) {
+            if (g_deposit.available_units[i] == "sat") {
+                g_deposit.selected_unit_index = i;
+                break;
+            }
+        }
+
         // Clear deposit/wallet state from previous mint
         // Reset selectively — do NOT touch amount_input (bound to FTXUI Input on UI thread)
         g_deposit.loading = false;
@@ -430,7 +452,7 @@ static Element render_mint_info() {
 
 static std::unique_ptr<std::thread> g_deposit_thread;
 
-static void do_create_quote(ScreenInteractive* screen, uint64_t amount) {
+static void do_create_quote(ScreenInteractive* screen, uint64_t amount, std::string unit) {
     {
         std::lock_guard<std::mutex> lock(g_mutex);
         g_deposit.loading = true;
@@ -448,13 +470,14 @@ static void do_create_quote(ScreenInteractive* screen, uint64_t amount) {
     screen->PostEvent(Event::Custom);
 
     try {
-        nutcpp::api::PostMintQuoteBolt11Request req(amount, "sat");
+        nutcpp::api::PostMintQuoteBolt11Request req(amount, unit);
         auto resp = g_client->create_mint_quote<
             nutcpp::api::PostMintQuoteBolt11Request,
             nutcpp::api::PostMintQuoteBolt11Response>("bolt11", req);
 
         std::lock_guard<std::mutex> lock(g_mutex);
         g_deposit.quote_amount = amount;
+        g_deposit.quote_unit = unit;
         g_deposit.quote_id = resp.quote;
         g_deposit.invoice = resp.request;
         g_deposit.quote_state = resp.state;
@@ -506,20 +529,29 @@ static void do_check_and_mint(ScreenInteractive* screen) {
 
             uint64_t amount;
             std::string quote_id;
+            std::string quote_unit;
             nutcpp::Keyset keyset;
             nutcpp::KeysetId kid("0000000000000000"); // reassigned below
             {
                 std::lock_guard<std::mutex> lock(g_mutex);
                 amount = g_deposit.quote_amount;
                 quote_id = g_deposit.quote_id;
-                if (!g_active_keyset) {
-                    g_deposit.error = "No active sat keyset found";
+                quote_unit = g_deposit.quote_unit;
+                bool found = false;
+                for (auto& ki : g_keys_items) {
+                    if (ki.active.value_or(false) && ki.unit == quote_unit) {
+                        kid = ki.id;
+                        keyset = ki.keys;
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) {
+                    g_deposit.error = "No active keyset for unit \"" + quote_unit + "\"";
                     g_deposit.loading = false;
                     screen->PostEvent(Event::Custom);
                     return;
                 }
-                kid = g_active_keyset->id;
-                keyset = g_active_keyset->keys;
             }
 
             auto amounts = nutcpp::wallet::split_amount(amount);
@@ -538,7 +570,7 @@ static void do_check_and_mint(ScreenInteractive* screen) {
             g_deposit.minted_total = 0;
             for (auto& p : proofs) {
                 DepositLNState::ProofRow row;
-                row.amount = std::to_string(p.amount);
+                row.amount = format_amount(p.amount, quote_unit);
                 row.keyset = p.id.to_string().substr(0, 16) + "...";
                 row.secret_short = p.secret.size() > 16
                     ? p.secret.substr(0, 16) + "..."
@@ -550,7 +582,7 @@ static void do_check_and_mint(ScreenInteractive* screen) {
             g_deposit.has_proofs = true;
             g_deposit.loading = false;
             g_deposit.quote_state = "ISSUED";
-            g_deposit.status_msg = "Minted " + std::to_string(g_deposit.minted_total) + " sats!";
+            g_deposit.status_msg = "Minted " + format_amount(g_deposit.minted_total, quote_unit) + "!";
 
         } else {
             std::lock_guard<std::mutex> lock(g_mutex);
@@ -629,13 +661,13 @@ static Element render_deposit_ln() {
     if (g_deposit.has_proofs) {
         lines.push_back(text("Minted Proofs") | bold | underlined);
         lines.push_back(hbox({
-            text("  Amount") | bold | size(WIDTH, EQUAL, 10),
+            text("  Amount") | bold | size(WIDTH, EQUAL, 14),
             text("Keyset") | bold | size(WIDTH, EQUAL, 22),
             text("Secret") | bold,
         }));
         for (auto& row : g_deposit.minted_proofs) {
             lines.push_back(hbox({
-                text("  " + row.amount) | size(WIDTH, EQUAL, 10) | color(Color::Green),
+                text("  " + row.amount) | size(WIDTH, EQUAL, 14) | color(Color::Green),
                 text(row.keyset) | size(WIDTH, EQUAL, 22),
                 text(row.secret_short) | dim,
             }));
@@ -643,7 +675,7 @@ static Element render_deposit_ln() {
         lines.push_back(text(""));
         lines.push_back(hbox({
             text("  Total minted: ") | bold,
-            text(std::to_string(g_deposit.minted_total) + " sats") | color(Color::Green) | bold,
+            text(format_amount(g_deposit.minted_total, g_deposit.quote_unit)) | color(Color::Green) | bold,
         }));
     }
 
@@ -850,8 +882,89 @@ static Element render_receive_ecash() {
 }
 
 // ============================================================
-// Token Inspector helpers
+// Wallet screen renderer
 // ============================================================
+
+static Element render_wallet() {
+    std::lock_guard<std::mutex> lock(g_mutex);
+
+    if (g_keys_items.empty()) {
+        return text("Connect to a mint first (Mint Info screen)") | dim | hcenter | vcenter;
+    }
+
+    if (g_wallet_proofs.empty()) {
+        return text("No proofs in wallet. Deposit or receive some eCash first.") | dim | hcenter | vcenter;
+    }
+
+    // Build keyset_id -> unit map
+    std::map<std::string, std::string> kid_to_unit;
+    for (auto& ki : g_keys_items)
+        kid_to_unit[ki.id.to_string()] = ki.unit;
+
+    // Group proofs by unit
+    struct ProofInfo {
+        uint64_t amount;
+        std::string keyset;
+        std::string secret_short;
+    };
+    std::map<std::string, std::vector<ProofInfo>> by_unit;
+    std::map<std::string, uint64_t> totals;
+
+    for (auto& p : g_wallet_proofs) {
+        auto it = kid_to_unit.find(p.id.to_string());
+        std::string unit = (it != kid_to_unit.end()) ? it->second : "?";
+
+        ProofInfo info;
+        info.amount = p.amount;
+        info.keyset = p.id.to_string();
+        if (info.keyset.size() > 16)
+            info.keyset = info.keyset.substr(0, 16) + "...";
+        info.secret_short = p.secret.size() > 16
+            ? p.secret.substr(0, 16) + "..."
+            : p.secret;
+
+        by_unit[unit].push_back(std::move(info));
+        totals[unit] += p.amount;
+    }
+
+    Elements lines;
+    lines.push_back(hbox({
+        text("Proofs: ") | bold,
+        text(std::to_string(g_wallet_proofs.size())) | color(Color::Cyan),
+        text("  Units: ") | bold,
+        text(std::to_string(by_unit.size())) | color(Color::Cyan),
+    }));
+    lines.push_back(text(""));
+
+    for (auto& [unit, proofs] : by_unit) {
+        // Unit header with subtotal
+        lines.push_back(hbox({
+            text(unit) | bold | underlined | color(Color::Yellow),
+            text("  —  ") | dim,
+            text(format_amount(totals[unit], unit)) | bold | color(Color::Green),
+            text("  (" + std::to_string(proofs.size()) + " proofs)") | dim,
+        }));
+
+        // Table header
+        lines.push_back(hbox({
+            text("  Amount") | bold | size(WIDTH, EQUAL, 14),
+            text("Keyset") | bold | size(WIDTH, EQUAL, 22),
+            text("Secret") | bold,
+        }));
+
+        for (auto& info : proofs) {
+            lines.push_back(hbox({
+                text("  " + format_amount(info.amount, unit)) | size(WIDTH, EQUAL, 14) | color(Color::Green),
+                text(info.keyset) | size(WIDTH, EQUAL, 22),
+                text(info.secret_short) | dim,
+            }));
+        }
+
+        lines.push_back(text(""));
+    }
+
+    return vbox(std::move(lines)) | vscroll_indicator | yframe;
+}
 
 // ============================================================
 // Token Inspector screen state
@@ -1074,6 +1187,7 @@ int main() {
     });
 
     // Deposit LN input + buttons
+    auto deposit_unit_toggle = Toggle(&g_deposit.available_units, &g_deposit.selected_unit_index);
     auto deposit_amount_input = Input(&g_deposit.amount_input, "100");
 
     // Read-only renderer for invoice — avoids data race with worker thread
@@ -1089,6 +1203,7 @@ int main() {
     auto create_quote_button = Button("Create Quote", [&] {
         bool can_start = false;
         uint64_t amount = 0;
+        std::string unit_snapshot;
         {
             std::lock_guard<std::mutex> lock(g_mutex);
             can_start = !g_deposit.loading;
@@ -1103,13 +1218,18 @@ int main() {
                     g_deposit.error = "Amount must be > 0";
                     return;
                 }
+                if (g_deposit.available_units.empty()) {
+                    g_deposit.error = "No units available. Connect to a mint first.";
+                    return;
+                }
+                unit_snapshot = g_deposit.available_units[g_deposit.selected_unit_index];
             }
         }
         if (can_start) {
             if (g_deposit_thread && g_deposit_thread->joinable())
                 g_deposit_thread->join();
             g_deposit_thread = std::make_unique<std::thread>(
-                do_create_quote, &screen, amount);
+                do_create_quote, &screen, amount, std::move(unit_snapshot));
         }
     });
 
@@ -1143,6 +1263,7 @@ int main() {
     auto deposit_controls = Container::Vertical({
         Container::Horizontal({
             deposit_amount_input,
+            deposit_unit_toggle,
             create_quote_button,
             check_status_button,
         }),
@@ -1285,8 +1406,10 @@ int main() {
             }
 
             Elements controls;
-            controls.push_back(text("Amount (sats): ") | bold);
+            controls.push_back(text("Amount: ") | bold);
             controls.push_back(deposit_amount_input->Render() | size(WIDTH, EQUAL, 12));
+            controls.push_back(text(" "));
+            controls.push_back(deposit_unit_toggle->Render());
             controls.push_back(text(" "));
             controls.push_back(create_quote_button->Render());
             if (has_quote) {
@@ -1325,6 +1448,9 @@ int main() {
                 separator(),
                 render_receive_ecash() | flex,
             });
+        } else if (selected == 6) {
+            // Wallet screen
+            content = render_wallet() | flex;
         } else if (selected == 5) {
             // Token Inspector screen
             Element token_row = hbox({
