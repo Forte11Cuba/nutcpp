@@ -10,6 +10,7 @@
 #include <atomic>
 #include <algorithm>
 #include <numeric>
+#include <cstdlib>
 
 #include "nutcpp/api/cashu_http_client.h"
 #include "nutcpp/api/cashu_error.h"
@@ -57,6 +58,23 @@ static std::string g_mint_url;
 static std::string g_status = "Not connected";
 static std::atomic<bool> g_shutdown{false};
 
+// Clipboard helper — tries xclip, xsel, wl-copy
+static bool copy_to_clipboard(const std::string& text) {
+    // Sanitize: reject strings with single quotes to avoid shell injection
+    if (text.find('\'') != std::string::npos) return false;
+
+    const char* cmds[] = {
+        "xclip -selection clipboard",
+        "xsel --clipboard --input",
+        "wl-copy",
+    };
+    for (auto* cmd : cmds) {
+        std::string full = "echo -n '" + text + "' | " + cmd + " 2>/dev/null";
+        if (std::system(full.c_str()) == 0) return true;
+    }
+    return false;
+}
+
 // Active keyset (keys + id) — fetched on connect
 static nutcpp::api::KeysResponseItem* g_active_keyset = nullptr;
 static std::vector<nutcpp::api::KeysResponseItem> g_keys_items;
@@ -73,6 +91,36 @@ static uint64_t wallet_balance_locked() {
         total += p.amount;
     return total;
 }
+
+// ============================================================
+// Deposit LN screen state (declared early — used in fetch_mint_info)
+// ============================================================
+
+struct DepositLNState {
+    std::string amount_input = "100";
+    bool loading = false;
+    std::string error;
+    std::string status_msg;
+
+    // Quote
+    bool has_quote = false;
+    uint64_t quote_amount = 0;
+    std::string quote_id;
+    std::string invoice;
+    std::string quote_state;
+
+    // Minted proofs
+    bool has_proofs = false;
+    struct ProofRow {
+        std::string amount;
+        std::string keyset;
+        std::string secret_short;
+    };
+    std::vector<ProofRow> minted_proofs;
+    uint64_t minted_total = 0;
+};
+
+static DepositLNState g_deposit;
 
 // ============================================================
 // Mint Info screen state
@@ -104,14 +152,12 @@ struct MintInfoState {
 static MintInfoState g_mint_info;
 static std::unique_ptr<std::thread> g_fetch_thread;
 
-static void fetch_mint_info(ScreenInteractive* screen) {
-    std::string url;
+static void fetch_mint_info(ScreenInteractive* screen, std::string url) {
     {
         std::lock_guard<std::mutex> lock(g_mutex);
         g_mint_info.loading = true;
         g_mint_info.error.clear();
         g_mint_info.has_info = false;
-        url = g_mint_info.url_input;
     }
     if (g_shutdown.load()) return;
     screen->PostEvent(Event::Custom);
@@ -167,6 +213,10 @@ static void fetch_mint_info(ScreenInteractive* screen) {
                 break;
             }
         }
+
+        // Clear deposit/wallet state from previous mint
+        g_deposit = DepositLNState{};
+        g_wallet_proofs.clear();
 
         g_mint_url = url;
         g_status = "Connected to " + g_mint_url;
@@ -263,38 +313,9 @@ static Element render_mint_info() {
     return vbox(std::move(info_lines)) | vscroll_indicator | yframe;
 }
 
-// ============================================================
-// Deposit LN screen state
-// ============================================================
-
-struct DepositLNState {
-    std::string amount_input = "100";
-    bool loading = false;
-    std::string error;
-    std::string status_msg;
-
-    // Quote
-    bool has_quote = false;
-    std::string quote_id;
-    std::string invoice;
-    std::string quote_state;
-
-    // Minted proofs
-    bool has_proofs = false;
-    struct ProofRow {
-        std::string amount;
-        std::string keyset;
-        std::string secret_short;
-    };
-    std::vector<ProofRow> minted_proofs;
-    uint64_t minted_total = 0;
-};
-
-static DepositLNState g_deposit;
 static std::unique_ptr<std::thread> g_deposit_thread;
 
-static void do_create_quote(ScreenInteractive* screen) {
-    uint64_t amount = 0;
+static void do_create_quote(ScreenInteractive* screen, uint64_t amount) {
     {
         std::lock_guard<std::mutex> lock(g_mutex);
         g_deposit.loading = true;
@@ -302,18 +323,6 @@ static void do_create_quote(ScreenInteractive* screen) {
         g_deposit.status_msg = "Creating quote...";
         g_deposit.has_quote = false;
         g_deposit.has_proofs = false;
-        try {
-            amount = std::stoull(g_deposit.amount_input);
-        } catch (...) {
-            g_deposit.error = "Invalid amount";
-            g_deposit.loading = false;
-            return;
-        }
-        if (amount == 0) {
-            g_deposit.error = "Amount must be > 0";
-            g_deposit.loading = false;
-            return;
-        }
         if (!g_client) {
             g_deposit.error = "Not connected to a mint. Go to Mint Info first.";
             g_deposit.loading = false;
@@ -330,6 +339,7 @@ static void do_create_quote(ScreenInteractive* screen) {
             nutcpp::api::PostMintQuoteBolt11Response>("bolt11", req);
 
         std::lock_guard<std::mutex> lock(g_mutex);
+        g_deposit.quote_amount = amount;
         g_deposit.quote_id = resp.quote;
         g_deposit.invoice = resp.request;
         g_deposit.quote_state = resp.state;
@@ -385,7 +395,7 @@ static void do_check_and_mint(ScreenInteractive* screen) {
             nutcpp::KeysetId kid("0000000000000000"); // reassigned below
             {
                 std::lock_guard<std::mutex> lock(g_mutex);
-                amount = std::stoull(g_deposit.amount_input);
+                amount = g_deposit.quote_amount;
                 quote_id = g_deposit.quote_id;
                 if (!g_active_keyset) {
                     g_deposit.error = "No active sat keyset found";
@@ -488,11 +498,7 @@ static Element render_deposit_ln() {
         lines.push_back(text("Quote") | bold | underlined);
         lines.push_back(hbox({text("  ID:      ") | bold, text(g_deposit.quote_id)}));
 
-        // Invoice: show truncated with hint
-        std::string inv_display = g_deposit.invoice;
-        if (inv_display.size() > 64)
-            inv_display = inv_display.substr(0, 64) + "...";
-        lines.push_back(hbox({text("  Invoice: ") | bold, text(inv_display)}));
+        // Invoice rendered as interactive Input in the main layout
 
         auto state_color = Color::Yellow;
         if (g_deposit.quote_state == "PAID") state_color = Color::Green;
@@ -553,14 +559,17 @@ int main() {
 
     auto connect_button = Button("Connect", [&] {
         bool can_start = false;
+        std::string url_snapshot;
         {
             std::lock_guard<std::mutex> lock(g_mutex);
             can_start = !g_mint_info.loading;
+            url_snapshot = g_mint_info.url_input;
         }
         if (can_start) {
             if (g_fetch_thread && g_fetch_thread->joinable())
                 g_fetch_thread->join();
-            g_fetch_thread = std::make_unique<std::thread>(fetch_mint_info, &screen);
+            g_fetch_thread = std::make_unique<std::thread>(
+                fetch_mint_info, &screen, std::move(url_snapshot));
         }
     });
 
@@ -572,16 +581,48 @@ int main() {
     // Deposit LN input + buttons
     auto deposit_amount_input = Input(&g_deposit.amount_input, "100");
 
+    auto invoice_input_option = InputOption::Default();
+    invoice_input_option.multiline = false;
+    auto deposit_invoice_input = Input(&g_deposit.invoice, "", invoice_input_option);
+
     auto create_quote_button = Button("Create Quote", [&] {
         bool can_start = false;
+        uint64_t amount = 0;
         {
             std::lock_guard<std::mutex> lock(g_mutex);
             can_start = !g_deposit.loading;
+            if (can_start) {
+                try {
+                    amount = std::stoull(g_deposit.amount_input);
+                } catch (...) {
+                    g_deposit.error = "Invalid amount";
+                    return;
+                }
+                if (amount == 0) {
+                    g_deposit.error = "Amount must be > 0";
+                    return;
+                }
+            }
         }
         if (can_start) {
             if (g_deposit_thread && g_deposit_thread->joinable())
                 g_deposit_thread->join();
-            g_deposit_thread = std::make_unique<std::thread>(do_create_quote, &screen);
+            g_deposit_thread = std::make_unique<std::thread>(
+                do_create_quote, &screen, amount);
+        }
+    });
+
+    auto copy_invoice_button = Button("Copy", [&] {
+        std::string invoice;
+        {
+            std::lock_guard<std::mutex> lock(g_mutex);
+            invoice = g_deposit.invoice;
+        }
+        if (!invoice.empty()) {
+            bool ok = copy_to_clipboard(invoice);
+            std::lock_guard<std::mutex> lock(g_mutex);
+            g_deposit.status_msg = ok ? "Invoice copied to clipboard!"
+                                      : "Copy failed — install xclip or wl-copy";
         }
     });
 
@@ -598,10 +639,16 @@ int main() {
         }
     });
 
-    auto deposit_controls = Container::Horizontal({
-        deposit_amount_input,
-        create_quote_button,
-        check_status_button,
+    auto deposit_controls = Container::Vertical({
+        Container::Horizontal({
+            deposit_amount_input,
+            create_quote_button,
+            check_status_button,
+        }),
+        Container::Horizontal({
+            deposit_invoice_input,
+            copy_invoice_button,
+        }),
     });
 
     // Placeholder for screens that have no interactive controls yet
@@ -682,11 +729,22 @@ int main() {
                 controls.push_back(check_status_button->Render());
             }
 
-            content = vbox({
-                hbox(std::move(controls)),
-                separator(),
-                render_deposit_ln() | flex,
-            });
+            Elements deposit_elements;
+            deposit_elements.push_back(hbox(std::move(controls)));
+            deposit_elements.push_back(separator());
+
+            if (has_quote) {
+                deposit_elements.push_back(
+                    hbox({text("Invoice: ") | bold,
+                          deposit_invoice_input->Render() | flex,
+                          text(" "),
+                          copy_invoice_button->Render()}) );
+                deposit_elements.push_back(separator());
+            }
+
+            deposit_elements.push_back(render_deposit_ln() | flex);
+
+            content = vbox(std::move(deposit_elements));
         } else {
             content = text("Select an option to begin") | dim | hcenter | vcenter;
         }
