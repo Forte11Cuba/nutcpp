@@ -139,8 +139,13 @@ vector<Proof> unblind_signatures(const vector<BlindSignature>& signatures,
         // Unblind: C = C_ - rA
         PubKey C = crypto::compute_C(sig.C_, bd.r, A);
 
+        // Combine mint's DLEQ {e,s} with wallet's blinding factor r -> DLEQProof {e,s,r}
+        optional<DLEQProof> dleq_proof;
+        if (sig.dleq.has_value())
+            dleq_proof = DLEQProof(sig.dleq->e, sig.dleq->s, bd.r);
+
         proofs.emplace_back(sig.amount, sig.id, bd.secret.value(), C,
-                            nullopt, sig.dleq);
+                            nullopt, dleq_proof);
     }
 
     return proofs;

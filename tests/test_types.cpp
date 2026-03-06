@@ -319,16 +319,16 @@ TEST_CASE("BlindSignature JSON with DLEQ", "[types]") {
     std::string pk_hex = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
     std::string e_hex = "0000000000000000000000000000000000000000000000000000000000000001";
     std::string s_hex = "0000000000000000000000000000000000000000000000000000000000000002";
-    std::string r_hex = "0000000000000000000000000000000000000000000000000000000000000003";
 
-    DLEQProof dleq{PrivKey(e_hex), PrivKey(s_hex), PrivKey(r_hex)};
+    // BlindSignature uses DLEQ {e, s} — mint doesn't know r (NUT-12)
+    DLEQ dleq{PrivKey(e_hex), PrivKey(s_hex)};
     BlindSignature bs{32, KeysetId("00abcdef01234567"), PubKey(pk_hex), dleq};
 
     nlohmann::json j = bs;
     REQUIRE(j.contains("dleq"));
     REQUIRE(j["dleq"]["e"] == e_hex);
     REQUIRE(j["dleq"]["s"] == s_hex);
-    REQUIRE(j["dleq"]["r"] == r_hex);
+    REQUIRE(!j["dleq"].contains("r"));
 
     BlindSignature bs2 = j.get<BlindSignature>();
     REQUIRE(bs2.amount == 32);
@@ -337,7 +337,6 @@ TEST_CASE("BlindSignature JSON with DLEQ", "[types]") {
     REQUIRE(bs2.dleq.has_value());
     REQUIRE(bs2.dleq.value().e.to_hex() == e_hex);
     REQUIRE(bs2.dleq.value().s.to_hex() == s_hex);
-    REQUIRE(bs2.dleq.value().r.to_hex() == r_hex);
 }
 
 TEST_CASE("BlindSignature JSON with explicit null dleq", "[types]") {
