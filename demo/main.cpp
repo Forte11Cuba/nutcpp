@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <numeric>
 #include <cstdio>
+#include <cinttypes>
 
 
 #include "nutcpp/api/cashu_http_client.h"
@@ -20,6 +21,7 @@
 #include "nutcpp/api_models/keys_response.h"
 #include "nutcpp/api_models/mint_models.h"
 #include "nutcpp/wallet/blinding_helper.h"
+#include "nutcpp/encoding/token_helper.h"
 
 using namespace ftxui;
 
@@ -551,6 +553,205 @@ static Element render_deposit_ln() {
 }
 
 // ============================================================
+// Token Inspector helpers
+// ============================================================
+
+// Cashu amounts are in the smallest unit of the currency:
+// "sat" → satoshis, "msat" → millisatoshis, "usd"/"eur" → cents.
+// Format for display: cents-based units get decimal point (100 → "1.00").
+static std::string format_amount(uint64_t raw, const std::string& unit) {
+    if (unit == "usd" || unit == "eur") {
+        uint64_t whole = raw / 100;
+        uint64_t frac = raw % 100;
+        char buf[64];
+        snprintf(buf, sizeof(buf), "%" PRIu64 ".%02" PRIu64, whole, frac);
+        return std::string(buf) + " " + unit;
+    }
+    return std::to_string(raw) + " " + unit;
+}
+
+// ============================================================
+// Token Inspector screen state
+// ============================================================
+
+struct TokenInspectorState {
+    std::string token_input;
+    std::string error;
+
+    // Decoded result
+    bool has_result = false;
+    std::string version;   // "A" or "B"
+    std::string unit;
+    std::string memo;
+
+    struct MintGroup {
+        std::string mint;
+        struct ProofRow {
+            std::string amount;
+            std::string keyset;
+            std::string secret;
+            std::string C;
+        };
+        std::vector<ProofRow> proofs;
+        uint64_t total = 0;
+    };
+    std::vector<MintGroup> mint_groups;
+    uint64_t grand_total = 0;
+    size_t total_proofs = 0;
+
+    // Re-encoded strings (empty = encode failed)
+    std::string encoded_v3;
+    std::string encoded_v4;
+    std::string encode_v3_error;
+    std::string encode_v4_error;
+
+    // Copy feedback
+    std::string status_msg;
+};
+
+static TokenInspectorState g_inspector;
+
+static void do_decode_token() {
+    g_inspector.error.clear();
+    g_inspector.has_result = false;
+    g_inspector.encoded_v3.clear();
+    g_inspector.encoded_v4.clear();
+    g_inspector.status_msg.clear();
+
+    if (g_inspector.token_input.empty()) {
+        g_inspector.error = "Paste a token string (cashuA... or cashuB...)";
+        return;
+    }
+
+    try {
+        std::string version;
+        auto token = nutcpp::encoding::TokenHelper::decode(
+            g_inspector.token_input, version);
+
+        g_inspector.version = version;
+        g_inspector.unit = token.unit.value_or("-");
+        g_inspector.memo = token.memo.value_or("-");
+        g_inspector.mint_groups.clear();
+        g_inspector.grand_total = 0;
+        g_inspector.total_proofs = 0;
+
+        for (auto& t : token.tokens) {
+            TokenInspectorState::MintGroup group;
+            group.mint = t.mint;
+            group.total = 0;
+            for (auto& p : t.proofs) {
+                TokenInspectorState::MintGroup::ProofRow row;
+                row.amount = std::to_string(p.amount);
+                row.keyset = p.id.to_string();
+                if (row.keyset.size() > 16)
+                    row.keyset = row.keyset.substr(0, 16) + "...";
+                row.secret = p.secret.size() > 24
+                    ? p.secret.substr(0, 24) + "..."
+                    : p.secret;
+                std::string c_hex = p.C.to_hex();
+                row.C = c_hex.size() > 16
+                    ? c_hex.substr(0, 16) + "..."
+                    : c_hex;
+                group.proofs.push_back(std::move(row));
+                group.total += p.amount;
+                g_inspector.grand_total += p.amount;
+                g_inspector.total_proofs++;
+            }
+            g_inspector.mint_groups.push_back(std::move(group));
+        }
+
+        // Re-encode to both formats
+        g_inspector.encode_v3_error.clear();
+        g_inspector.encode_v4_error.clear();
+        try { g_inspector.encoded_v3 = nutcpp::encoding::TokenHelper::encode(token, "A"); }
+        catch (const std::exception& e) { g_inspector.encoded_v3.clear(); g_inspector.encode_v3_error = e.what(); }
+        try { g_inspector.encoded_v4 = nutcpp::encoding::TokenHelper::encode(token, "B"); }
+        catch (const std::exception& e) { g_inspector.encoded_v4.clear(); g_inspector.encode_v4_error = e.what(); }
+
+        g_inspector.has_result = true;
+
+    } catch (const std::exception& e) {
+        g_inspector.error = e.what();
+    }
+}
+
+static Element render_token_inspector() {
+    if (!g_inspector.error.empty()) {
+        return text("Error: " + g_inspector.error) | color(Color::Red);
+    }
+
+    if (!g_inspector.has_result) {
+        return text("Paste a cashuA/cashuB token and press Decode") | dim | hcenter | vcenter;
+    }
+
+    Elements lines;
+
+    // Copy feedback
+    if (!g_inspector.status_msg.empty()) {
+        lines.push_back(text(g_inspector.status_msg) | color(Color::Green));
+        lines.push_back(text(""));
+    }
+
+    // Header info
+    std::string ver_label = g_inspector.version == "A" ? "V3 (JSON)" : "V4 (CBOR)";
+    lines.push_back(hbox({text("Format:  ") | bold, text(ver_label) | color(Color::Cyan)}));
+    lines.push_back(hbox({text("Unit:    ") | bold, text(g_inspector.unit)}));
+    lines.push_back(hbox({text("Memo:    ") | bold, text(g_inspector.memo)}));
+    lines.push_back(hbox({
+        text("Total:   ") | bold,
+        text(format_amount(g_inspector.grand_total, g_inspector.unit)) | color(Color::Green) | bold,
+        text("  (" + std::to_string(g_inspector.total_proofs) + " proofs)") | dim,
+    }));
+
+    // Proofs per mint
+    for (auto& group : g_inspector.mint_groups) {
+        lines.push_back(text(""));
+        lines.push_back(hbox({
+            text("Mint: ") | bold | underlined,
+            text(group.mint) | underlined,
+        }));
+
+        // Table header
+        lines.push_back(hbox({
+            text("  Amount") | bold | size(WIDTH, EQUAL, 10),
+            text("Keyset") | bold | size(WIDTH, EQUAL, 22),
+            text("Secret") | bold | size(WIDTH, EQUAL, 28),
+            text("C") | bold,
+        }));
+
+        for (auto& row : group.proofs) {
+            lines.push_back(hbox({
+                text("  " + row.amount) | size(WIDTH, EQUAL, 10) | color(Color::Green),
+                text(row.keyset) | size(WIDTH, EQUAL, 22),
+                text(row.secret) | size(WIDTH, EQUAL, 28) | dim,
+                text(row.C) | dim,
+            }));
+        }
+
+        lines.push_back(hbox({
+            text("  Subtotal: ") | bold,
+            text(format_amount(group.total, g_inspector.unit)) | color(Color::Yellow),
+        }));
+    }
+
+    // Re-encoded tokens
+    lines.push_back(text(""));
+    lines.push_back(text("Re-encoded") | bold | underlined);
+
+    if (!g_inspector.encoded_v3.empty())
+        lines.push_back(hbox({text("  cashuA: ") | bold, text(g_inspector.encoded_v3) | dim}));
+    else
+        lines.push_back(hbox({text("  cashuA: ") | bold, text(g_inspector.encode_v3_error) | color(Color::Red)}));
+
+    if (!g_inspector.encoded_v4.empty())
+        lines.push_back(hbox({text("  cashuB: ") | bold, text(g_inspector.encoded_v4) | dim}));
+    else
+        lines.push_back(hbox({text("  cashuB: ") | bold, text(g_inspector.encode_v4_error) | color(Color::Red)}));
+
+    return vbox(std::move(lines)) | vscroll_indicator | yframe;
+}
+
+// ============================================================
 // Main
 // ============================================================
 
@@ -668,30 +869,58 @@ int main() {
         }),
     });
 
-    // Placeholder for screens that have no interactive controls yet
-    auto empty_screen = Renderer([] { return text(""); });
+    // Token Inspector input + buttons
+    auto inspector_token_input = Input(&g_inspector.token_input, "cashuA... or cashuB...");
 
-    // Right panel: Tab container indexed by selected menu item
-    auto right_tab = Container::Tab({
-        mint_info_controls,   // 0: Mint Info
-        deposit_controls,     // 1: Deposit LN
-        empty_screen,         // 2: Withdraw LN
-        empty_screen,         // 3: Receive eCash
-        empty_screen,         // 4: Send eCash
-        empty_screen,         // 5: Token Inspector
-        empty_screen,         // 6: Wallet
-        empty_screen,         // 7: Check States
-        empty_screen,         // 8: Swap
-        empty_screen,         // 9: Secrets
-        empty_screen,         // 10: NUT-13
-        empty_screen,         // 11: P2PK / HTLC
-        empty_screen,         // 12: Payment Request
-    }, &selected);
+    auto decode_button = Button("Decode", [&] {
+        do_decode_token();
+    });
 
-    // Horizontal: menu (left) | screen controls (right)
+    auto copy_v3_button = Button("Copy cashuA", [&] {
+        if (g_inspector.encoded_v3.empty()) {
+            g_inspector.status_msg = "V3 encode failed - nothing to copy";
+            return;
+        }
+        bool ok = copy_to_clipboard(g_inspector.encoded_v3);
+        g_inspector.status_msg = ok ? "cashuA copied to clipboard!"
+                                    : "Copy failed - install xclip or wl-copy";
+    });
+
+    auto copy_v4_button = Button("Copy cashuB", [&] {
+        if (g_inspector.encoded_v4.empty()) {
+            g_inspector.status_msg = "V4 encode failed - nothing to copy";
+            return;
+        }
+        bool ok = copy_to_clipboard(g_inspector.encoded_v4);
+        g_inspector.status_msg = ok ? "cashuB copied to clipboard!"
+                                    : "Copy failed - install xclip or wl-copy";
+    });
+
+    auto inspector_copy_controls = Container::Horizontal({
+        copy_v3_button,
+        copy_v4_button,
+    }) | Maybe([&] { return g_inspector.has_result; });
+
+    auto inspector_controls = Container::Vertical({
+        Container::Horizontal({
+            inspector_token_input,
+            decode_button,
+        }),
+        inspector_copy_controls,
+    });
+
+    // Right panel: only the active screen's controls are visible and focusable.
+    // Using Maybe instead of Container::Tab to avoid focus-stealing issues.
+    auto right_content = Container::Stacked({
+        mint_info_controls | Maybe([&] { return selected == 0; }),
+        deposit_controls   | Maybe([&] { return selected == 1; }),
+        inspector_controls | Maybe([&] { return selected == 5; }),
+    });
+
+    // Horizontal: menu (left) | active screen controls (right)
     auto all_components = Container::Horizontal({
         menu,
-        right_tab,
+        right_content,
     });
 
     auto layout = Renderer(all_components, [&]() -> Element {
@@ -762,6 +991,30 @@ int main() {
             deposit_elements.push_back(render_deposit_ln() | flex);
 
             content = vbox(std::move(deposit_elements));
+        } else if (selected == 5) {
+            // Token Inspector screen
+            Element token_row = hbox({
+                text("Token: ") | bold,
+                inspector_token_input->Render() | flex,
+                text(" "),
+                decode_button->Render(),
+            });
+
+            Elements inspector_elements;
+            inspector_elements.push_back(token_row);
+            inspector_elements.push_back(separator());
+
+            if (g_inspector.has_result) {
+                inspector_elements.push_back(hbox({
+                    copy_v3_button->Render(),
+                    text(" "),
+                    copy_v4_button->Render(),
+                }));
+                inspector_elements.push_back(separator());
+            }
+
+            inspector_elements.push_back(render_token_inspector() | flex);
+            content = vbox(std::move(inspector_elements));
         } else {
             content = text("Select an option to begin") | dim | hcenter | vcenter;
         }
