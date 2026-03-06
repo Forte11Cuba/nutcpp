@@ -10,6 +10,7 @@ add_library(nutcpp
     api/cashu_http_client.cpp
     wallet/fee_helper.cpp
     wallet/proof_selector.cpp
+    wallet/blinding_helper.cpp
     nuts/nut10_secret.cpp
     nuts/p2pk.cpp
     nuts/htlc.cpp
@@ -49,3 +50,8 @@ target_compile_definitions(nutcpp
     PRIVATE
         CPPHTTPLIB_OPENSSL_SUPPORT
 )
+
+# Windows: bcrypt needed for BCryptGenRandom (p2pk.cpp, p2bk.cpp, blinding_helper.cpp)
+if(WIN32)
+    target_link_libraries(nutcpp PRIVATE bcrypt)
+endif()
