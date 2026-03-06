@@ -552,7 +552,12 @@ int main() {
     auto mint_url_input = Input(&g_mint_info.url_input, "https://mint.example.com");
 
     auto connect_button = Button("Connect", [&] {
-        if (!g_mint_info.loading) {
+        bool can_start = false;
+        {
+            std::lock_guard<std::mutex> lock(g_mutex);
+            can_start = !g_mint_info.loading;
+        }
+        if (can_start) {
             if (g_fetch_thread && g_fetch_thread->joinable())
                 g_fetch_thread->join();
             g_fetch_thread = std::make_unique<std::thread>(fetch_mint_info, &screen);
@@ -568,7 +573,12 @@ int main() {
     auto deposit_amount_input = Input(&g_deposit.amount_input, "100");
 
     auto create_quote_button = Button("Create Quote", [&] {
-        if (!g_deposit.loading) {
+        bool can_start = false;
+        {
+            std::lock_guard<std::mutex> lock(g_mutex);
+            can_start = !g_deposit.loading;
+        }
+        if (can_start) {
             if (g_deposit_thread && g_deposit_thread->joinable())
                 g_deposit_thread->join();
             g_deposit_thread = std::make_unique<std::thread>(do_create_quote, &screen);
@@ -576,7 +586,12 @@ int main() {
     });
 
     auto check_status_button = Button("Check Status", [&] {
-        if (!g_deposit.loading && g_deposit.has_quote) {
+        bool can_check = false;
+        {
+            std::lock_guard<std::mutex> lock(g_mutex);
+            can_check = !g_deposit.loading && g_deposit.has_quote;
+        }
+        if (can_check) {
             if (g_deposit_thread && g_deposit_thread->joinable())
                 g_deposit_thread->join();
             g_deposit_thread = std::make_unique<std::thread>(do_check_and_mint, &screen);
