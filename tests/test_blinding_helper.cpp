@@ -282,18 +282,20 @@ TEST_CASE("unblind_signatures: preserves DLEQ from signature", "[wallet][blindin
     auto outputs = create_blinded_outputs({1}, kid, {secret}, {r});
     PubKey C_ = crypto::compute_C_(outputs.blinded_messages[0].B_, mint_key);
 
-    // Create signature with DLEQ proof
+    // Create signature with DLEQ {e, s} (mint doesn't know r)
     PrivKey e_val("1111111111111111111111111111111111111111111111111111111111111111");
     PrivKey s_val("2222222222222222222222222222222222222222222222222222222222222222");
-    DLEQProof dleq(e_val, s_val, r);
+    DLEQ dleq(e_val, s_val);
     BlindSignature sig(1, kid, C_, dleq);
 
     auto proofs = unblind_signatures({sig}, outputs.blinding_data, keyset);
 
+    // unblind_signatures combines mint's {e,s} with wallet's r -> DLEQProof {e,s,r}
     REQUIRE(proofs.size() == 1);
     REQUIRE(proofs[0].dleq.has_value());
     CHECK(proofs[0].dleq->e.to_hex() == e_val.to_hex());
     CHECK(proofs[0].dleq->s.to_hex() == s_val.to_hex());
+    CHECK(proofs[0].dleq->r.to_hex() == r.to_hex());
 }
 
 TEST_CASE("unblind_signatures: multiple denominations", "[wallet][blinding]") {
