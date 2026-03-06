@@ -1883,12 +1883,14 @@ int main() {
             });
         } else if (selected == 4) {
             // Send eCash screen
+            bool send_has_result;
             {
                 std::lock_guard<std::mutex> lock(g_mutex);
                 if (send_units_ui != g_send.available_units) {
                     send_units_ui = g_send.available_units;
                     send_unit_selected_ui = g_send.selected_unit_index;
                 }
+                send_has_result = g_send.has_result;
             }
 
             Element send_row = hbox({
@@ -1906,7 +1908,7 @@ int main() {
             send_elements.push_back(send_row);
             send_elements.push_back(separator());
 
-            if (g_send.has_result) {
+            if (send_has_result) {
                 send_elements.push_back(hbox({
                     send_copy_v4_button->Render(),
                     text(" "),
