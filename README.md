@@ -24,8 +24,7 @@ cmake --build build
 ### Connect to a Mint
 
 ```cpp
-#include "nutcpp/api/cashu_http_client.h"
-#include "nutcpp/api_models/info_response.h"
+#include "nutcpp/nutcpp.h"
 
 nutcpp::api::CashuHttpClient client("https://testnut.cashu.space");
 
@@ -39,9 +38,6 @@ auto keys = client.get_keys();
 ### Mint Tokens via Lightning
 
 ```cpp
-#include "nutcpp/api_models/mint_models.h"
-#include "nutcpp/wallet/blinding_helper.h"
-
 using namespace nutcpp;
 using namespace nutcpp::wallet;
 using namespace nutcpp::api;
@@ -70,9 +66,6 @@ auto proofs = unblind_signatures(
 ### Encode and Decode Tokens
 
 ```cpp
-#include "nutcpp/encoding/token_helper.h"
-#include "nutcpp/types/cashu_token.h"
-
 // Encode proofs as a shareable token string
 Token tok("https://testnut.cashu.space", proofs);
 CashuToken cashu_token({tok}, "sat", std::nullopt);
@@ -91,7 +84,7 @@ auto decoded = encoding::TokenHelper::decode(token_string, version);
 nutcpp provides high-level wallet helpers that reduce the 6-step BDHKE protocol to 3 function calls. These are library functions (not demo-only) and have no HTTP coupling — the caller controls all API calls.
 
 ```cpp
-#include "nutcpp/wallet/blinding_helper.h"
+#include "nutcpp/nutcpp.h"
 
 // Split amount into power-of-2 denominations
 auto amounts = nutcpp::wallet::split_amount(100); // {4, 32, 64}
@@ -118,8 +111,6 @@ auto outputs = nutcpp::wallet::create_blinded_outputs(
 ### P2PK (Pay-to-Public-Key) — NUT-11
 
 ```cpp
-#include "nutcpp/nuts/p2pk.h"
-
 // Lock a proof to a public key (or multisig n-of-m)
 nutcpp::P2PKBuilder builder;
 builder.pubkeys = {pubkey1, pubkey2};
@@ -137,8 +128,6 @@ bool valid = ps.verify_witness(secret, witness);
 ### HTLC (Hash Time-Locked Contracts) — NUT-14
 
 ```cpp
-#include "nutcpp/nuts/htlc.h"
-
 // Lock with a hashlock + authorized pubkeys
 nutcpp::HTLCBuilder builder;
 builder.hashlock = sha256_hex;
@@ -152,8 +141,6 @@ auto witness = ps.generate_witness(msg, {privkey}, preimage_hex);
 ### Deterministic Secrets — NUT-13
 
 ```cpp
-#include "nutcpp/nuts/nut13.h"
-
 // Derive secrets from a BIP-39 mnemonic
 auto seed = nutcpp::internal::mnemonic_to_seed(
     "half depart obvious quality work element tank gorilla view sugar picture humble");
@@ -167,8 +154,6 @@ Supports both v0 (BIP-32 path derivation) and v1 (HMAC-SHA256 KDF), dispatched a
 ### Payment Requests — NUT-18/26
 
 ```cpp
-#include "nutcpp/payment/payment_request_encoder.h"
-
 // Decode any payment request (creqA or creqB)
 auto pr = nutcpp::payment::PaymentRequestEncoder::parse(creq_string);
 // pr.amount, pr.unit, pr.mints, pr.transports, pr.nut10
@@ -181,9 +166,6 @@ std::string creqB = nutcpp::payment::PaymentRequestBech32Encoder::encode(request
 ## Fee-Aware Proof Selection
 
 ```cpp
-#include "nutcpp/wallet/proof_selector.h"
-#include "nutcpp/wallet/fee_helper.h"
-
 // Compute swap fee: ceil(sum_ppk / 1000)
 uint64_t fee = nutcpp::wallet::compute_fee(proofs, keyset_fees);
 
