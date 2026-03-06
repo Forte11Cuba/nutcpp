@@ -23,6 +23,7 @@
 #include "nutcpp/api_models/mint_models.h"
 #include "nutcpp/wallet/blinding_helper.h"
 #include "nutcpp/wallet/fee_helper.h"
+#include "nutcpp/wallet/proof_selector.h"
 #include "nutcpp/encoding/token_helper.h"
 #include "nutcpp/api_models/swap_models.h"
 
@@ -78,7 +79,7 @@ static const std::vector<MenuItem> menu_items = {
     {"Deposit LN",       "Deposit Lightning (NUT-04)",          false},
     {"Withdraw LN",      "Withdraw Lightning (NUT-05)",         true},
     {"Receive eCash",    "Receive eCash",                       false},
-    {"Send eCash",       "Send eCash",                          true},
+    {"Send eCash",       "Send eCash",                          false},
     {"Token Inspector",  "Token Inspector (NUT-00)",            false},
     {"Wallet",           "Wallet",                              false},
     {"Check States",     "Check States (NUT-07)",               true},
@@ -224,6 +225,35 @@ static ReceiveState g_receive;
 static std::unique_ptr<std::thread> g_receive_thread;
 
 // ============================================================
+// Send eCash screen state (declared early — used in fetch_mint_info)
+// ============================================================
+
+struct SendState {
+    std::string amount_input;
+    bool loading = false;
+    std::string error;
+    std::string status_msg;
+
+    // Unit selection (UI-local copies synced in render)
+    std::vector<std::string> available_units;
+    int selected_unit_index = 0;
+
+    // Result
+    bool has_result = false;
+    std::string encoded_v3;
+    std::string encoded_v4;
+    std::string encode_v3_error;
+    std::string encode_v4_error;
+    uint64_t sent_total = 0;
+    std::string sent_unit;
+    uint64_t fee = 0;
+    size_t num_proofs = 0;
+};
+
+static SendState g_send;
+static std::unique_ptr<std::thread> g_send_thread;
+
+// ============================================================
 // Mint Info screen state
 // ============================================================
 
@@ -353,6 +383,14 @@ static void fetch_mint_info(ScreenInteractive* screen, std::string url) {
         g_receive.received_proofs.clear();
         g_receive.received_total = 0;
         g_receive.unit.clear();
+        g_send.loading = false;
+        g_send.error.clear();
+        g_send.status_msg.clear();
+        g_send.has_result = false;
+        g_send.encoded_v3.clear();
+        g_send.encoded_v4.clear();
+        g_send.available_units = g_deposit.available_units;
+        g_send.selected_unit_index = g_deposit.selected_unit_index;
         g_wallet_proofs.clear();
 
         g_mint_url = url;
@@ -882,6 +920,299 @@ static Element render_receive_ecash() {
 }
 
 // ============================================================
+// Send eCash logic
+// ============================================================
+
+static void do_send_ecash(ScreenInteractive* screen, uint64_t amount, std::string unit) {
+    {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        g_send.loading = true;
+        g_send.error.clear();
+        g_send.status_msg = "Selecting proofs...";
+        g_send.has_result = false;
+        g_send.encoded_v3.clear();
+        g_send.encoded_v4.clear();
+        g_send.encode_v3_error.clear();
+        g_send.encode_v4_error.clear();
+    }
+    if (g_shutdown.load()) return;
+    screen->PostEvent(Event::Custom);
+
+    try {
+        // Snapshot shared state
+        std::string mint_url;
+        std::vector<nutcpp::Proof> unit_proofs;
+        std::map<nutcpp::KeysetId, uint64_t> keyset_fees;
+        nutcpp::KeysetId kid("0000000000000000");
+        nutcpp::Keyset keyset;
+        nutcpp::api::CashuHttpClient* client_snap = nullptr;
+        {
+            std::lock_guard<std::mutex> lock(g_mutex);
+            if (!g_client) {
+                g_send.error = "Not connected to a mint. Go to Mint Info first.";
+                g_send.loading = false;
+                screen->PostEvent(Event::Custom);
+                return;
+            }
+            mint_url = g_mint_url;
+            client_snap = g_client.get();
+
+            // Build keyset_id -> unit map and filter proofs by unit
+            std::map<std::string, std::string> kid_to_unit;
+            for (auto& ki : g_keys_items)
+                kid_to_unit[ki.id.to_string()] = ki.unit;
+
+            for (auto& p : g_wallet_proofs) {
+                auto it = kid_to_unit.find(p.id.to_string());
+                if (it != kid_to_unit.end() && it->second == unit)
+                    unit_proofs.push_back(p);
+            }
+
+            // Fee map
+            for (auto& ks : g_mint_info.keysets) {
+                if (ks.fee_ppk > 0)
+                    keyset_fees[nutcpp::KeysetId(ks.id)] = ks.fee_ppk;
+            }
+
+            // Find active keyset for this unit
+            bool found = false;
+            for (auto& ki : g_keys_items) {
+                if (ki.active.value_or(false) && ki.unit == unit) {
+                    kid = ki.id;
+                    keyset = ki.keys;
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                g_send.error = "No active keyset for unit \"" + unit + "\"";
+                g_send.loading = false;
+                screen->PostEvent(Event::Custom);
+                return;
+            }
+        }
+
+        if (unit_proofs.empty()) {
+            std::lock_guard<std::mutex> lock(g_mutex);
+            g_send.error = "No proofs in wallet for unit \"" + unit + "\"";
+            g_send.loading = false;
+            screen->PostEvent(Event::Custom);
+            return;
+        }
+
+        // Select proofs
+        nutcpp::wallet::ProofSelector selector(keyset_fees);
+        auto result = selector.select_proofs_to_send(unit_proofs, amount, true);
+
+        if (result.send.empty()) {
+            std::lock_guard<std::mutex> lock(g_mutex);
+            g_send.error = "Insufficient balance for " + format_amount(amount, unit);
+            g_send.loading = false;
+            screen->PostEvent(Event::Custom);
+            return;
+        }
+
+        // Check if we need swap for change
+        uint64_t send_total = 0;
+        for (auto& p : result.send) send_total += p.amount;
+        uint64_t send_fee = nutcpp::wallet::compute_fee(result.send, keyset_fees);
+
+        std::vector<nutcpp::Proof> token_proofs;
+
+        if (send_total - send_fee > amount) {
+            // Need swap: send all selected proofs, get back exact amount + change
+            {
+                std::lock_guard<std::mutex> lock(g_mutex);
+                g_send.status_msg = "Swapping for exact change...";
+            }
+            screen->PostEvent(Event::Custom);
+
+            uint64_t change_amount = send_total - send_fee - amount;
+
+            // Outputs: proofs for recipient + change for us
+            auto send_amounts = nutcpp::wallet::split_amount(amount);
+            auto change_amounts = nutcpp::wallet::split_amount(change_amount);
+
+            // Validate denomination coverage
+            for (auto a : send_amounts) {
+                if (keyset.find(a) == keyset.end())
+                    throw std::runtime_error("Keyset missing pubkey for amount " + std::to_string(a));
+            }
+            for (auto a : change_amounts) {
+                if (keyset.find(a) == keyset.end())
+                    throw std::runtime_error("Keyset missing pubkey for amount " + std::to_string(a));
+            }
+
+            auto send_outputs = nutcpp::wallet::create_blinded_outputs(send_amounts, kid);
+            auto change_outputs = nutcpp::wallet::create_blinded_outputs(change_amounts, kid);
+
+            // Combine all blinded messages for the swap
+            std::vector<nutcpp::BlindedMessage> all_messages;
+            all_messages.insert(all_messages.end(),
+                send_outputs.blinded_messages.begin(), send_outputs.blinded_messages.end());
+            all_messages.insert(all_messages.end(),
+                change_outputs.blinded_messages.begin(), change_outputs.blinded_messages.end());
+
+            nutcpp::api::PostSwapRequest swap_req(result.send, all_messages);
+            auto swap_resp = client_snap->swap(swap_req);
+
+            // Split signatures: first N are send, rest are change
+            size_t send_count = send_amounts.size();
+            std::vector<nutcpp::BlindSignature> send_sigs(
+                swap_resp.signatures.begin(),
+                swap_resp.signatures.begin() + send_count);
+            std::vector<nutcpp::BlindSignature> change_sigs(
+                swap_resp.signatures.begin() + send_count,
+                swap_resp.signatures.end());
+
+            token_proofs = nutcpp::wallet::unblind_signatures(
+                send_sigs, send_outputs.blinding_data, keyset);
+            auto change_proofs = nutcpp::wallet::unblind_signatures(
+                change_sigs, change_outputs.blinding_data, keyset);
+
+            // Update wallet: remove spent proofs, add change
+            {
+                std::lock_guard<std::mutex> lock(g_mutex);
+                // Remove the sent proofs from wallet
+                std::set<std::string> spent_secrets;
+                for (auto& p : result.send)
+                    spent_secrets.insert(p.secret);
+
+                std::vector<nutcpp::Proof> remaining;
+                for (auto& p : g_wallet_proofs) {
+                    if (spent_secrets.find(p.secret) == spent_secrets.end())
+                        remaining.push_back(std::move(p));
+                }
+                g_wallet_proofs = std::move(remaining);
+
+                // Add change back
+                for (auto& p : change_proofs)
+                    g_wallet_proofs.push_back(std::move(p));
+            }
+        } else {
+            // Exact match — no swap needed
+            token_proofs = result.send;
+
+            // Remove sent proofs from wallet
+            {
+                std::lock_guard<std::mutex> lock(g_mutex);
+                std::set<std::string> spent_secrets;
+                for (auto& p : result.send)
+                    spent_secrets.insert(p.secret);
+
+                std::vector<nutcpp::Proof> remaining;
+                for (auto& p : g_wallet_proofs) {
+                    if (spent_secrets.find(p.secret) == spent_secrets.end())
+                        remaining.push_back(std::move(p));
+                }
+                g_wallet_proofs = std::move(remaining);
+            }
+        }
+
+        // Encode as token
+        nutcpp::Token tok(mint_url, token_proofs);
+        nutcpp::CashuToken cashu_token({tok}, unit, std::nullopt);
+
+        std::string v3, v4, v3_err, v4_err;
+        try { v3 = nutcpp::encoding::TokenHelper::encode(cashu_token, "A"); }
+        catch (const std::exception& e) { v3_err = e.what(); }
+        try { v4 = nutcpp::encoding::TokenHelper::encode(cashu_token, "B"); }
+        catch (const std::exception& e) { v4_err = e.what(); }
+
+        uint64_t total = 0;
+        for (auto& p : token_proofs) total += p.amount;
+
+        {
+            std::lock_guard<std::mutex> lock(g_mutex);
+            g_send.encoded_v3 = std::move(v3);
+            g_send.encoded_v4 = std::move(v4);
+            g_send.encode_v3_error = std::move(v3_err);
+            g_send.encode_v4_error = std::move(v4_err);
+            g_send.sent_total = total;
+            g_send.sent_unit = unit;
+            g_send.fee = send_fee;
+            g_send.num_proofs = token_proofs.size();
+            g_send.has_result = true;
+            g_send.loading = false;
+            g_send.status_msg = "Token created: " + format_amount(total, unit);
+            if (send_fee > 0)
+                g_send.status_msg += " (fee: " + format_amount(send_fee, unit) + ")";
+        }
+
+    } catch (const nutcpp::api::CashuProtocolException& e) {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        g_send.error = std::string("Mint error: ") + e.what();
+        g_send.loading = false;
+    } catch (const std::exception& e) {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        g_send.error = e.what();
+        g_send.loading = false;
+    }
+
+    if (!g_shutdown.load())
+        screen->PostEvent(Event::Custom);
+}
+
+// ============================================================
+// Send eCash screen renderer
+// ============================================================
+
+static Element render_send_ecash() {
+    std::lock_guard<std::mutex> lock(g_mutex);
+
+    if (!g_client) {
+        return text("Connect to a mint first (Mint Info screen)") | dim | hcenter | vcenter;
+    }
+
+    if (g_send.loading) {
+        return text(g_send.status_msg) | dim | hcenter | vcenter;
+    }
+
+    if (!g_send.error.empty()) {
+        return text("Error: " + g_send.error) | color(Color::Red);
+    }
+
+    if (!g_send.has_result) {
+        return text("Enter an amount, select unit, and press Send") | dim | hcenter | vcenter;
+    }
+
+    Elements lines;
+
+    // Status
+    lines.push_back(text(g_send.status_msg) | color(Color::Green) | bold);
+    lines.push_back(text(""));
+
+    // Token info
+    lines.push_back(hbox({
+        text("Amount: ") | bold,
+        text(format_amount(g_send.sent_total, g_send.sent_unit)) | color(Color::Green) | bold,
+        text("  (" + std::to_string(g_send.num_proofs) + " proofs)") | dim,
+    }));
+    if (g_send.fee > 0) {
+        lines.push_back(hbox({
+            text("Fee:    ") | bold,
+            text(format_amount(g_send.fee, g_send.sent_unit)) | dim,
+        }));
+    }
+    lines.push_back(text(""));
+
+    // Encoded tokens
+    lines.push_back(text("Token (copy and send to recipient)") | bold | underlined);
+    if (!g_send.encoded_v4.empty()) {
+        lines.push_back(hbox({text("  cashuB: ") | bold, text(g_send.encoded_v4) | dim}));
+    } else if (!g_send.encode_v4_error.empty()) {
+        lines.push_back(hbox({text("  cashuB: ") | bold, text(g_send.encode_v4_error) | color(Color::Red)}));
+    }
+    if (!g_send.encoded_v3.empty()) {
+        lines.push_back(hbox({text("  cashuA: ") | bold, text(g_send.encoded_v3) | dim}));
+    } else if (!g_send.encode_v3_error.empty()) {
+        lines.push_back(hbox({text("  cashuA: ") | bold, text(g_send.encode_v3_error) | color(Color::Red)}));
+    }
+
+    return vbox(std::move(lines)) | vscroll_indicator | yframe;
+}
+
+// ============================================================
 // Wallet screen renderer
 // ============================================================
 
@@ -1315,6 +1646,90 @@ int main() {
         receive_clear_button,
     });
 
+    // Send eCash input + buttons
+    std::vector<std::string> send_units_ui;
+    int send_unit_selected_ui = 0;
+    auto send_unit_toggle = Toggle(&send_units_ui, &send_unit_selected_ui);
+    auto send_amount_input = Input(&g_send.amount_input, "100");
+
+    auto send_button = Button("Send", [&] {
+        bool can_start = false;
+        uint64_t amount = 0;
+        std::string unit_snapshot;
+        {
+            std::lock_guard<std::mutex> lock(g_mutex);
+            can_start = !g_send.loading;
+            if (can_start) {
+                try {
+                    amount = std::stoull(g_send.amount_input);
+                } catch (...) {
+                    g_send.error = "Invalid amount";
+                    return;
+                }
+                if (amount == 0) {
+                    g_send.error = "Amount must be > 0";
+                    return;
+                }
+            }
+        }
+        if (can_start) {
+            if (send_units_ui.empty()) {
+                std::lock_guard<std::mutex> lock(g_mutex);
+                g_send.error = "No units available. Connect to a mint first.";
+                return;
+            }
+            unit_snapshot = send_units_ui[send_unit_selected_ui];
+            if (g_send_thread && g_send_thread->joinable())
+                g_send_thread->join();
+            g_send_thread = std::make_unique<std::thread>(
+                do_send_ecash, &screen, amount, std::move(unit_snapshot));
+        }
+    });
+
+    auto send_clear_button = Button("Clear", [&] {
+        g_send.amount_input.clear();
+        g_send.error.clear();
+        g_send.status_msg.clear();
+        g_send.has_result = false;
+        g_send.encoded_v3.clear();
+        g_send.encoded_v4.clear();
+    });
+
+    auto send_copy_v4_button = Button("Copy cashuB", [&] {
+        if (g_send.encoded_v4.empty()) {
+            g_send.status_msg = "V4 encode failed - nothing to copy";
+            return;
+        }
+        bool ok = copy_to_clipboard(g_send.encoded_v4);
+        g_send.status_msg = ok ? "cashuB copied to clipboard!"
+                                : "Copy failed - install xclip or wl-copy";
+    });
+
+    auto send_copy_v3_button = Button("Copy cashuA", [&] {
+        if (g_send.encoded_v3.empty()) {
+            g_send.status_msg = "V3 encode failed - nothing to copy";
+            return;
+        }
+        bool ok = copy_to_clipboard(g_send.encoded_v3);
+        g_send.status_msg = ok ? "cashuA copied to clipboard!"
+                                : "Copy failed - install xclip or wl-copy";
+    });
+
+    auto send_copy_controls = Container::Horizontal({
+        send_copy_v4_button,
+        send_copy_v3_button,
+    }) | Maybe([&] { return g_send.has_result; });
+
+    auto send_controls = Container::Vertical({
+        Container::Horizontal({
+            send_amount_input,
+            send_unit_toggle,
+            send_button,
+            send_clear_button,
+        }),
+        send_copy_controls,
+    });
+
     // Token Inspector input + buttons
     auto inspector_token_input = Input(&g_inspector.token_input, "cashuA... or cashuB...");
 
@@ -1361,6 +1776,7 @@ int main() {
         mint_info_controls | Maybe([&] { return selected == 0; }),
         deposit_controls   | Maybe([&] { return selected == 1; }),
         receive_controls   | Maybe([&] { return selected == 3; }),
+        send_controls      | Maybe([&] { return selected == 4; }),
         inspector_controls | Maybe([&] { return selected == 5; }),
     });
 
@@ -1391,7 +1807,11 @@ int main() {
         // Right panel content
         Element content;
         if (item.coming_soon) {
-            content = text("Coming soon...") | dim | hcenter | vcenter;
+            content = vbox({
+                text("Coming soon in demo") | dim | hcenter,
+                text(""),
+                text("Already implemented in the library") | color(Color::Cyan) | hcenter,
+            }) | vcenter;
         } else if (selected == 0) {
             // Mint Info screen
             Element url_row = hbox({
@@ -1461,6 +1881,42 @@ int main() {
                 separator(),
                 render_receive_ecash() | flex,
             });
+        } else if (selected == 4) {
+            // Send eCash screen
+            {
+                std::lock_guard<std::mutex> lock(g_mutex);
+                if (send_units_ui != g_send.available_units) {
+                    send_units_ui = g_send.available_units;
+                    send_unit_selected_ui = g_send.selected_unit_index;
+                }
+            }
+
+            Element send_row = hbox({
+                text("Amount: ") | bold,
+                send_amount_input->Render() | size(WIDTH, EQUAL, 12),
+                text(" "),
+                send_unit_toggle->Render(),
+                text(" "),
+                send_button->Render(),
+                text(" "),
+                send_clear_button->Render(),
+            });
+
+            Elements send_elements;
+            send_elements.push_back(send_row);
+            send_elements.push_back(separator());
+
+            if (g_send.has_result) {
+                send_elements.push_back(hbox({
+                    send_copy_v4_button->Render(),
+                    text(" "),
+                    send_copy_v3_button->Render(),
+                }));
+                send_elements.push_back(separator());
+            }
+
+            send_elements.push_back(render_send_ecash() | flex);
+            content = vbox(std::move(send_elements));
         } else if (selected == 6) {
             // Wallet screen
             content = render_wallet() | flex;
@@ -1545,6 +2001,8 @@ int main() {
         g_deposit_thread->join();
     if (g_receive_thread && g_receive_thread->joinable())
         g_receive_thread->join();
+    if (g_send_thread && g_send_thread->joinable())
+        g_send_thread->join();
 
     return 0;
 }
