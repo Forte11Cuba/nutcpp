@@ -877,19 +877,23 @@ int main() {
     });
 
     auto copy_v3_button = Button("Copy cashuA", [&] {
-        if (!g_inspector.encoded_v3.empty()) {
-            bool ok = copy_to_clipboard(g_inspector.encoded_v3);
-            g_inspector.status_msg = ok ? "cashuA copied to clipboard!"
-                                        : "Copy failed - install xclip or wl-copy";
+        if (g_inspector.encoded_v3.empty()) {
+            g_inspector.status_msg = "V3 encode failed - nothing to copy";
+            return;
         }
+        bool ok = copy_to_clipboard(g_inspector.encoded_v3);
+        g_inspector.status_msg = ok ? "cashuA copied to clipboard!"
+                                    : "Copy failed - install xclip or wl-copy";
     });
 
     auto copy_v4_button = Button("Copy cashuB", [&] {
-        if (!g_inspector.encoded_v4.empty()) {
-            bool ok = copy_to_clipboard(g_inspector.encoded_v4);
-            g_inspector.status_msg = ok ? "cashuB copied to clipboard!"
-                                        : "Copy failed - install xclip or wl-copy";
+        if (g_inspector.encoded_v4.empty()) {
+            g_inspector.status_msg = "V4 encode failed - nothing to copy";
+            return;
         }
+        bool ok = copy_to_clipboard(g_inspector.encoded_v4);
+        g_inspector.status_msg = ok ? "cashuB copied to clipboard!"
+                                    : "Copy failed - install xclip or wl-copy";
     });
 
     auto inspector_copy_controls = Container::Horizontal({
