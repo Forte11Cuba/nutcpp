@@ -680,7 +680,12 @@ static void do_receive_ecash(ScreenInteractive* screen, std::string token_str) {
         std::string token_mint = token.tokens[0].mint;
         auto& proofs = token.tokens[0].proofs;
 
-        // 2. Check mint matches
+        // 2. Snapshot all shared state under a single lock
+        std::string token_unit = token.unit.value_or("sat");
+        nutcpp::api::CashuHttpClient* client_snap = nullptr;
+        nutcpp::KeysetId kid("0000000000000000");
+        nutcpp::Keyset keyset;
+        std::map<nutcpp::KeysetId, uint64_t> keyset_fees;
         {
             std::lock_guard<std::mutex> lock(g_mutex);
             if (!g_client) {
@@ -695,38 +700,8 @@ static void do_receive_ecash(ScreenInteractive* screen, std::string token_str) {
                 screen->PostEvent(Event::Custom);
                 return;
             }
-            g_receive.status_msg = "Swapping proofs with mint...";
-        }
-        screen->PostEvent(Event::Custom);
 
-        // 3. Calculate input total and fees
-        uint64_t input_total = 0;
-        for (auto& p : proofs)
-            input_total += p.amount;
-
-        // Build keyset fee map from cached keys
-        std::map<nutcpp::KeysetId, uint64_t> keyset_fees;
-        {
-            std::lock_guard<std::mutex> lock(g_mutex);
-            for (auto& ks : g_mint_info.keysets) {
-                if (ks.fee_ppk > 0)
-                    keyset_fees[nutcpp::KeysetId(ks.id)] = ks.fee_ppk;
-            }
-        }
-
-        uint64_t fee = nutcpp::wallet::compute_fee(proofs, keyset_fees);
-        if (input_total <= fee)
-            throw std::runtime_error("Token value (" + std::to_string(input_total) +
-                ") is not enough to cover swap fee (" + std::to_string(fee) + ")");
-
-        uint64_t output_total = input_total - fee;
-
-        // 4. Create blinded outputs — find active keyset matching token unit
-        std::string token_unit = token.unit.value_or("sat");
-        nutcpp::KeysetId kid("0000000000000000");
-        nutcpp::Keyset keyset;
-        {
-            std::lock_guard<std::mutex> lock(g_mutex);
+            // Find active keyset matching token unit
             bool found = false;
             for (auto& ki : g_keys_items) {
                 if (ki.active.value_or(false) && ki.unit == token_unit) {
@@ -742,30 +717,57 @@ static void do_receive_ecash(ScreenInteractive* screen, std::string token_str) {
                 screen->PostEvent(Event::Custom);
                 return;
             }
+
+            // Build keyset fee map
+            for (auto& ks : g_mint_info.keysets) {
+                if (ks.fee_ppk > 0)
+                    keyset_fees[nutcpp::KeysetId(ks.id)] = ks.fee_ppk;
+            }
+
+            client_snap = g_client.get();
+            g_receive.status_msg = "Swapping proofs with mint...";
+        }
+        screen->PostEvent(Event::Custom);
+
+        // 3. Calculate input total and fees
+        uint64_t input_total = 0;
+        for (auto& p : proofs)
+            input_total += p.amount;
+
+        uint64_t fee = nutcpp::wallet::compute_fee(proofs, keyset_fees);
+        if (input_total <= fee)
+            throw std::runtime_error("Token value (" + std::to_string(input_total) +
+                ") is not enough to cover swap fee (" + std::to_string(fee) + ")");
+
+        uint64_t output_total = input_total - fee;
+
+        // 4. Validate denomination coverage before swap (proofs are non-recoverable after swap)
+        auto amounts = nutcpp::wallet::split_amount(output_total);
+        for (auto amt : amounts) {
+            if (keyset.find(amt) == keyset.end())
+                throw std::runtime_error(
+                    "Active keyset is missing pubkey for amount " + std::to_string(amt));
         }
 
-        auto amounts = nutcpp::wallet::split_amount(output_total);
         auto outputs = nutcpp::wallet::create_blinded_outputs(amounts, kid);
 
         // 5. Swap with mint
         nutcpp::api::PostSwapRequest swap_req(proofs, outputs.blinded_messages);
-        auto swap_resp = g_client->swap(swap_req);
+        auto swap_resp = client_snap->swap(swap_req);
 
         // 6. Unblind signatures
         auto new_proofs = nutcpp::wallet::unblind_signatures(
             swap_resp.signatures, outputs.blinding_data, keyset);
 
         // 7. Store results
-        std::string unit_str;
         {
             std::lock_guard<std::mutex> lock(g_mutex);
-            unit_str = token.unit.value_or("sat");
-            g_receive.unit = unit_str;
+            g_receive.unit = token_unit;
             g_receive.received_proofs.clear();
             g_receive.received_total = 0;
             for (auto& p : new_proofs) {
                 ReceiveState::ProofRow row;
-                row.amount = std::to_string(p.amount);
+                row.amount = format_amount(p.amount, token_unit);
                 row.keyset = p.id.to_string().substr(0, 16) + "...";
                 row.secret_short = p.secret.size() > 16
                     ? p.secret.substr(0, 16) + "..."
@@ -776,9 +778,9 @@ static void do_receive_ecash(ScreenInteractive* screen, std::string token_str) {
             }
             g_receive.has_result = true;
             g_receive.loading = false;
-            g_receive.status_msg = "Received " + format_amount(g_receive.received_total, unit_str) + "!";
+            g_receive.status_msg = "Received " + format_amount(g_receive.received_total, token_unit) + "!";
             if (fee > 0)
-                g_receive.status_msg += " (fee: " + std::to_string(fee) + ")";
+                g_receive.status_msg += " (fee: " + format_amount(fee, token_unit) + ")";
         }
 
     } catch (const nutcpp::api::CashuProtocolException& e) {
@@ -1169,9 +1171,19 @@ int main() {
         }
     });
 
+    auto receive_clear_button = Button("Clear", [&] {
+        g_receive.token_input.clear();
+        g_receive.error.clear();
+        g_receive.status_msg.clear();
+        g_receive.has_result = false;
+        g_receive.received_proofs.clear();
+        g_receive.received_total = 0;
+    });
+
     auto receive_controls = Container::Horizontal({
         receive_token_input,
         receive_button,
+        receive_clear_button,
     });
 
     // Token Inspector input + buttons
@@ -1305,6 +1317,8 @@ int main() {
                 receive_token_input->Render() | flex,
                 text(" "),
                 receive_button->Render(),
+                text(" "),
+                receive_clear_button->Render(),
             });
             content = vbox({
                 receive_row,
