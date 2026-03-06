@@ -10,7 +10,8 @@
 #include <atomic>
 #include <algorithm>
 #include <numeric>
-#include <cstdlib>
+#include <cstdio>
+
 
 #include "nutcpp/api/cashu_http_client.h"
 #include "nutcpp/api/cashu_error.h"
@@ -58,19 +59,18 @@ static std::string g_mint_url;
 static std::string g_status = "Not connected";
 static std::atomic<bool> g_shutdown{false};
 
-// Clipboard helper — tries xclip, xsel, wl-copy
+// Clipboard helper — tries xclip, xsel, wl-copy via popen (no shell interpolation)
 static bool copy_to_clipboard(const std::string& text) {
-    // Sanitize: reject strings with single quotes to avoid shell injection
-    if (text.find('\'') != std::string::npos) return false;
-
     const char* cmds[] = {
         "xclip -selection clipboard",
         "xsel --clipboard --input",
         "wl-copy",
     };
     for (auto* cmd : cmds) {
-        std::string full = "echo -n '" + text + "' | " + cmd + " 2>/dev/null";
-        if (std::system(full.c_str()) == 0) return true;
+        FILE* pipe = popen(cmd, "w");
+        if (!pipe) continue;
+        fwrite(text.data(), 1, text.size(), pipe);
+        if (pclose(pipe) == 0) return true;
     }
     return false;
 }
