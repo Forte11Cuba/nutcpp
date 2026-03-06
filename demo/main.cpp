@@ -21,7 +21,9 @@
 #include "nutcpp/api_models/keys_response.h"
 #include "nutcpp/api_models/mint_models.h"
 #include "nutcpp/wallet/blinding_helper.h"
+#include "nutcpp/wallet/fee_helper.h"
 #include "nutcpp/encoding/token_helper.h"
+#include "nutcpp/api_models/swap_models.h"
 
 using namespace ftxui;
 
@@ -117,16 +119,47 @@ static nutcpp::api::KeysResponseItem* g_active_keyset = nullptr;
 static std::vector<nutcpp::api::KeysResponseItem> g_keys_items;
 
 // ============================================================
+// Amount formatting helper
+// ============================================================
+
+// Cashu amounts are in the smallest unit of the currency:
+// "sat" → satoshis, "msat" → millisatoshis, "usd"/"eur" → cents.
+// Format for display: cents-based units get decimal point (100 → "1.00").
+static std::string format_amount(uint64_t raw, const std::string& unit) {
+    if (unit == "usd" || unit == "eur") {
+        uint64_t whole = raw / 100;
+        uint64_t frac = raw % 100;
+        char buf[64];
+        snprintf(buf, sizeof(buf), "%" PRIu64 ".%02" PRIu64, whole, frac);
+        return std::string(buf) + " " + unit;
+    }
+    return std::to_string(raw) + " " + unit;
+}
+
+// ============================================================
 // Wallet state (global)
 // ============================================================
 
 static std::vector<nutcpp::Proof> g_wallet_proofs;
 
-static uint64_t wallet_balance_locked() {
-    uint64_t total = 0;
-    for (auto& p : g_wallet_proofs)
-        total += p.amount;
-    return total;
+// Returns balance per unit, e.g. {{"sat", 500}, {"usd", 150}}
+// Requires g_mutex held by caller.
+static std::map<std::string, uint64_t> wallet_balances_locked() {
+    // Build keyset_id -> unit map and seed all active units with 0
+    std::map<std::string, std::string> kid_to_unit;
+    std::map<std::string, uint64_t> balances;
+    for (auto& ki : g_keys_items) {
+        kid_to_unit[ki.id.to_string()] = ki.unit;
+        if (ki.active.value_or(false))
+            balances[ki.unit];  // insert 0 if not present
+    }
+
+    for (auto& p : g_wallet_proofs) {
+        auto it = kid_to_unit.find(p.id.to_string());
+        std::string unit = (it != kid_to_unit.end()) ? it->second : "?";
+        balances[unit] += p.amount;
+    }
+    return balances;
 }
 
 // ============================================================
@@ -160,6 +193,31 @@ struct DepositLNState {
 static DepositLNState g_deposit;
 
 // ============================================================
+// Receive eCash screen state (declared early — used in fetch_mint_info)
+// ============================================================
+
+struct ReceiveState {
+    std::string token_input;
+    bool loading = false;
+    std::string error;
+    std::string status_msg;
+
+    // Result
+    bool has_result = false;
+    struct ProofRow {
+        std::string amount;
+        std::string keyset;
+        std::string secret_short;
+    };
+    std::vector<ProofRow> received_proofs;
+    uint64_t received_total = 0;
+    std::string unit;
+};
+
+static ReceiveState g_receive;
+static std::unique_ptr<std::thread> g_receive_thread;
+
+// ============================================================
 // Mint Info screen state
 // ============================================================
 
@@ -182,6 +240,7 @@ struct MintInfoState {
         std::string unit;
         std::string active;
         std::string fee;
+        uint64_t fee_ppk = 0;  // numeric fee for compute_fee
     };
     std::vector<KeysetRow> keysets;
 };
@@ -235,8 +294,9 @@ static void fetch_mint_info(ScreenInteractive* screen, std::string url) {
             row.id = ks.id.to_string();
             row.unit = ks.unit;
             row.active = ks.active ? "yes" : "no";
-            row.fee = ks.input_fee_ppk.has_value()
-                ? std::to_string(ks.input_fee_ppk.value()) + " ppk"
+            row.fee_ppk = ks.input_fee_ppk.value_or(0);
+            row.fee = row.fee_ppk > 0
+                ? std::to_string(row.fee_ppk) + " ppk"
                 : "-";
             g_mint_info.keysets.push_back(std::move(row));
         }
@@ -264,6 +324,13 @@ static void fetch_mint_info(ScreenInteractive* screen, std::string url) {
         g_deposit.has_proofs = false;
         g_deposit.minted_proofs.clear();
         g_deposit.minted_total = 0;
+        g_receive.loading = false;
+        g_receive.error.clear();
+        g_receive.status_msg.clear();
+        g_receive.has_result = false;
+        g_receive.received_proofs.clear();
+        g_receive.received_total = 0;
+        g_receive.unit.clear();
         g_wallet_proofs.clear();
 
         g_mint_url = url;
@@ -587,23 +654,204 @@ static Element render_deposit_ln() {
     return vbox(std::move(lines)) | vscroll_indicator | yframe;
 }
 
+static void do_receive_ecash(ScreenInteractive* screen, std::string token_str) {
+    {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        g_receive.loading = true;
+        g_receive.error.clear();
+        g_receive.status_msg = "Decoding token...";
+        g_receive.has_result = false;
+    }
+    if (g_shutdown.load()) return;
+    screen->PostEvent(Event::Custom);
+
+    try {
+        // 1. Decode token
+        std::string version;
+        auto token = nutcpp::encoding::TokenHelper::decode(token_str, version);
+
+        if (token.tokens.empty() || token.tokens[0].proofs.empty())
+            throw std::runtime_error("Token has no proofs");
+
+        if (token.tokens.size() > 1)
+            throw std::runtime_error("Multi-mint tokens are not supported. Token contains "
+                + std::to_string(token.tokens.size()) + " mint entries.");
+
+        std::string token_mint = token.tokens[0].mint;
+        auto& proofs = token.tokens[0].proofs;
+
+        // 2. Snapshot all shared state under a single lock
+        std::string token_unit = token.unit.value_or("sat");
+        nutcpp::api::CashuHttpClient* client_snap = nullptr;
+        nutcpp::KeysetId kid("0000000000000000");
+        nutcpp::Keyset keyset;
+        std::map<nutcpp::KeysetId, uint64_t> keyset_fees;
+        {
+            std::lock_guard<std::mutex> lock(g_mutex);
+            if (!g_client) {
+                g_receive.error = "Not connected to a mint. Go to Mint Info first.";
+                g_receive.loading = false;
+                screen->PostEvent(Event::Custom);
+                return;
+            }
+            if (token_mint != g_mint_url) {
+                g_receive.error = "Token mint (" + token_mint + ") does not match connected mint (" + g_mint_url + ")";
+                g_receive.loading = false;
+                screen->PostEvent(Event::Custom);
+                return;
+            }
+
+            // Find active keyset matching token unit
+            bool found = false;
+            for (auto& ki : g_keys_items) {
+                if (ki.active.value_or(false) && ki.unit == token_unit) {
+                    kid = ki.id;
+                    keyset = ki.keys;
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                g_receive.error = "No active keyset for unit \"" + token_unit + "\"";
+                g_receive.loading = false;
+                screen->PostEvent(Event::Custom);
+                return;
+            }
+
+            // Build keyset fee map
+            for (auto& ks : g_mint_info.keysets) {
+                if (ks.fee_ppk > 0)
+                    keyset_fees[nutcpp::KeysetId(ks.id)] = ks.fee_ppk;
+            }
+
+            client_snap = g_client.get();
+            g_receive.status_msg = "Swapping proofs with mint...";
+        }
+        screen->PostEvent(Event::Custom);
+
+        // 3. Calculate input total and fees
+        uint64_t input_total = 0;
+        for (auto& p : proofs)
+            input_total += p.amount;
+
+        uint64_t fee = nutcpp::wallet::compute_fee(proofs, keyset_fees);
+        if (input_total <= fee)
+            throw std::runtime_error("Token value (" + std::to_string(input_total) +
+                ") is not enough to cover swap fee (" + std::to_string(fee) + ")");
+
+        uint64_t output_total = input_total - fee;
+
+        // 4. Validate denomination coverage before swap (proofs are non-recoverable after swap)
+        auto amounts = nutcpp::wallet::split_amount(output_total);
+        for (auto amt : amounts) {
+            if (keyset.find(amt) == keyset.end())
+                throw std::runtime_error(
+                    "Active keyset is missing pubkey for amount " + std::to_string(amt));
+        }
+
+        auto outputs = nutcpp::wallet::create_blinded_outputs(amounts, kid);
+
+        // 5. Swap with mint
+        nutcpp::api::PostSwapRequest swap_req(proofs, outputs.blinded_messages);
+        auto swap_resp = client_snap->swap(swap_req);
+
+        // 6. Unblind signatures
+        auto new_proofs = nutcpp::wallet::unblind_signatures(
+            swap_resp.signatures, outputs.blinding_data, keyset);
+
+        // 7. Store results
+        {
+            std::lock_guard<std::mutex> lock(g_mutex);
+            g_receive.unit = token_unit;
+            g_receive.received_proofs.clear();
+            g_receive.received_total = 0;
+            for (auto& p : new_proofs) {
+                ReceiveState::ProofRow row;
+                row.amount = format_amount(p.amount, token_unit);
+                row.keyset = p.id.to_string().substr(0, 16) + "...";
+                row.secret_short = p.secret.size() > 16
+                    ? p.secret.substr(0, 16) + "..."
+                    : p.secret;
+                g_receive.received_proofs.push_back(std::move(row));
+                g_receive.received_total += p.amount;
+                g_wallet_proofs.push_back(std::move(p));
+            }
+            g_receive.has_result = true;
+            g_receive.loading = false;
+            g_receive.status_msg = "Received " + format_amount(g_receive.received_total, token_unit) + "!";
+            if (fee > 0)
+                g_receive.status_msg += " (fee: " + format_amount(fee, token_unit) + ")";
+        }
+
+    } catch (const nutcpp::api::CashuProtocolException& e) {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        g_receive.error = std::string("Mint error: ") + e.what();
+        g_receive.loading = false;
+    } catch (const std::exception& e) {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        g_receive.error = e.what();
+        g_receive.loading = false;
+    }
+
+    if (!g_shutdown.load())
+        screen->PostEvent(Event::Custom);
+}
+
+// ============================================================
+// Receive eCash screen renderer
+// ============================================================
+
+static Element render_receive_ecash() {
+    std::lock_guard<std::mutex> lock(g_mutex);
+
+    if (!g_client) {
+        return text("Connect to a mint first (Mint Info screen)") | dim | hcenter | vcenter;
+    }
+
+    if (g_receive.loading) {
+        return text(g_receive.status_msg) | dim | hcenter | vcenter;
+    }
+
+    if (!g_receive.error.empty()) {
+        return text("Error: " + g_receive.error) | color(Color::Red);
+    }
+
+    if (!g_receive.has_result) {
+        return text("Paste a cashuA/cashuB token and press Receive") | dim | hcenter | vcenter;
+    }
+
+    Elements lines;
+
+    // Status
+    lines.push_back(text(g_receive.status_msg) | color(Color::Green) | bold);
+    lines.push_back(text(""));
+
+    // Proofs table
+    lines.push_back(text("Received Proofs") | bold | underlined);
+    lines.push_back(hbox({
+        text("  Amount") | bold | size(WIDTH, EQUAL, 10),
+        text("Keyset") | bold | size(WIDTH, EQUAL, 22),
+        text("Secret") | bold,
+    }));
+    for (auto& row : g_receive.received_proofs) {
+        lines.push_back(hbox({
+            text("  " + row.amount) | size(WIDTH, EQUAL, 10) | color(Color::Green),
+            text(row.keyset) | size(WIDTH, EQUAL, 22),
+            text(row.secret_short) | dim,
+        }));
+    }
+    lines.push_back(text(""));
+    lines.push_back(hbox({
+        text("  Total: ") | bold,
+        text(format_amount(g_receive.received_total, g_receive.unit)) | color(Color::Green) | bold,
+    }));
+
+    return vbox(std::move(lines)) | vscroll_indicator | yframe;
+}
+
 // ============================================================
 // Token Inspector helpers
 // ============================================================
-
-// Cashu amounts are in the smallest unit of the currency:
-// "sat" → satoshis, "msat" → millisatoshis, "usd"/"eur" → cents.
-// Format for display: cents-based units get decimal point (100 → "1.00").
-static std::string format_amount(uint64_t raw, const std::string& unit) {
-    if (unit == "usd" || unit == "eur") {
-        uint64_t whole = raw / 100;
-        uint64_t frac = raw % 100;
-        char buf[64];
-        snprintf(buf, sizeof(buf), "%" PRIu64 ".%02" PRIu64, whole, frac);
-        return std::string(buf) + " " + unit;
-    }
-    return std::to_string(raw) + " " + unit;
-}
 
 // ============================================================
 // Token Inspector screen state
@@ -904,6 +1152,40 @@ int main() {
         }),
     });
 
+    // Receive eCash input + button
+    auto receive_token_input = Input(&g_receive.token_input, "cashuA... or cashuB...");
+
+    auto receive_button = Button("Receive", [&] {
+        bool can_start = false;
+        std::string token_snapshot;
+        {
+            std::lock_guard<std::mutex> lock(g_mutex);
+            can_start = !g_receive.loading;
+            token_snapshot = g_receive.token_input;
+        }
+        if (can_start) {
+            if (g_receive_thread && g_receive_thread->joinable())
+                g_receive_thread->join();
+            g_receive_thread = std::make_unique<std::thread>(
+                do_receive_ecash, &screen, std::move(token_snapshot));
+        }
+    });
+
+    auto receive_clear_button = Button("Clear", [&] {
+        g_receive.token_input.clear();
+        g_receive.error.clear();
+        g_receive.status_msg.clear();
+        g_receive.has_result = false;
+        g_receive.received_proofs.clear();
+        g_receive.received_total = 0;
+    });
+
+    auto receive_controls = Container::Horizontal({
+        receive_token_input,
+        receive_button,
+        receive_clear_button,
+    });
+
     // Token Inspector input + buttons
     auto inspector_token_input = Input(&g_inspector.token_input, "cashuA... or cashuB...");
 
@@ -949,6 +1231,7 @@ int main() {
     auto right_content = Container::Stacked({
         mint_info_controls | Maybe([&] { return selected == 0; }),
         deposit_controls   | Maybe([&] { return selected == 1; }),
+        receive_controls   | Maybe([&] { return selected == 3; }),
         inspector_controls | Maybe([&] { return selected == 5; }),
     });
 
@@ -1027,6 +1310,21 @@ int main() {
             deposit_elements.push_back(render_deposit_ln() | flex);
 
             content = vbox(std::move(deposit_elements));
+        } else if (selected == 3) {
+            // Receive eCash screen
+            Element receive_row = hbox({
+                text("Token: ") | bold,
+                receive_token_input->Render() | flex,
+                text(" "),
+                receive_button->Render(),
+                text(" "),
+                receive_clear_button->Render(),
+            });
+            content = vbox({
+                receive_row,
+                separator(),
+                render_receive_ecash() | flex,
+            });
         } else if (selected == 5) {
             // Token Inspector screen
             Element token_row = hbox({
@@ -1062,18 +1360,26 @@ int main() {
         });
         right_panel = right_panel | border | flex;
 
-        // Status bar with balance
+        // Status bar with balance per unit
         std::string status;
-        uint64_t balance = 0;
+        std::string balance_str;
         {
             std::lock_guard<std::mutex> lock(g_mutex);
             status = g_status;
-            balance = wallet_balance_locked();
+            auto balances = wallet_balances_locked();
+            if (balances.empty()) {
+                balance_str = "Balance: 0";
+            } else {
+                balance_str = "Balance:";
+                for (auto& [unit, amount] : balances)
+                    balance_str += " " + format_amount(amount, unit) + " |";
+                balance_str.pop_back(); // remove trailing '|'
+            }
         }
         Element status_bar = hbox({
             text(status) | color(Color::Cyan),
             filler(),
-            text("Balance: " + std::to_string(balance) + " sats") | bold | color(Color::Yellow),
+            text(balance_str) | bold | color(Color::Yellow),
         });
 
         // Main layout
@@ -1098,6 +1404,8 @@ int main() {
         g_fetch_thread->join();
     if (g_deposit_thread && g_deposit_thread->joinable())
         g_deposit_thread->join();
+    if (g_receive_thread && g_receive_thread->joinable())
+        g_receive_thread->join();
 
     return 0;
 }
