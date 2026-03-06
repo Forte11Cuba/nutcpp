@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="screenshots/logo.png" alt="nutcpp logo" width="200">
+</p>
+
 # nutcpp
 
 A C++17 library implementing the [Cashu](https://cashu.space) protocol — privacy-preserving electronic cash built on Bitcoin.
