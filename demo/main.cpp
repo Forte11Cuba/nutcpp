@@ -1187,7 +1187,11 @@ int main() {
     });
 
     // Deposit LN input + buttons
-    auto deposit_unit_toggle = Toggle(&g_deposit.available_units, &g_deposit.selected_unit_index);
+    // UI-local copies — avoids data race with fetch_mint_info background thread.
+    // Synced from g_deposit.available_units under mutex in the render lambda.
+    std::vector<std::string> deposit_units_ui;
+    int deposit_unit_selected_ui = 0;
+    auto deposit_unit_toggle = Toggle(&deposit_units_ui, &deposit_unit_selected_ui);
     auto deposit_amount_input = Input(&g_deposit.amount_input, "100");
 
     // Read-only renderer for invoice — avoids data race with worker thread
@@ -1218,12 +1222,16 @@ int main() {
                     g_deposit.error = "Amount must be > 0";
                     return;
                 }
-                if (g_deposit.available_units.empty()) {
-                    g_deposit.error = "No units available. Connect to a mint first.";
-                    return;
-                }
-                unit_snapshot = g_deposit.available_units[g_deposit.selected_unit_index];
             }
+        }
+        // Read UI-local toggle state (UI thread only, no mutex needed)
+        if (can_start) {
+            if (deposit_units_ui.empty()) {
+                std::lock_guard<std::mutex> lock(g_mutex);
+                g_deposit.error = "No units available. Connect to a mint first.";
+                return;
+            }
+            unit_snapshot = deposit_units_ui[deposit_unit_selected_ui];
         }
         if (can_start) {
             if (g_deposit_thread && g_deposit_thread->joinable())
@@ -1403,6 +1411,11 @@ int main() {
             {
                 std::lock_guard<std::mutex> lock(g_mutex);
                 has_quote = g_deposit.has_quote;
+                // Sync UI-local unit list from background thread
+                if (deposit_units_ui != g_deposit.available_units) {
+                    deposit_units_ui = g_deposit.available_units;
+                    deposit_unit_selected_ui = g_deposit.selected_unit_index;
+                }
             }
 
             Elements controls;
