@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <numeric>
 #include <cstdio>
+#include <cinttypes>
 
 
 #include "nutcpp/api/cashu_http_client.h"
@@ -552,6 +553,24 @@ static Element render_deposit_ln() {
 }
 
 // ============================================================
+// Token Inspector helpers
+// ============================================================
+
+// Cashu amounts are in the smallest unit of the currency:
+// "sat" → satoshis, "msat" → millisatoshis, "usd"/"eur" → cents.
+// Format for display: cents-based units get decimal point (100 → "1.00").
+static std::string format_amount(uint64_t raw, const std::string& unit) {
+    if (unit == "usd" || unit == "eur") {
+        uint64_t whole = raw / 100;
+        uint64_t frac = raw % 100;
+        char buf[64];
+        snprintf(buf, sizeof(buf), "%" PRIu64 ".%02" PRIu64, whole, frac);
+        return std::string(buf) + " " + unit;
+    }
+    return std::to_string(raw) + " " + unit;
+}
+
+// ============================================================
 // Token Inspector screen state
 // ============================================================
 
@@ -580,9 +599,11 @@ struct TokenInspectorState {
     uint64_t grand_total = 0;
     size_t total_proofs = 0;
 
-    // Re-encoded strings
+    // Re-encoded strings (empty = encode failed)
     std::string encoded_v3;
     std::string encoded_v4;
+    std::string encode_v3_error;
+    std::string encode_v4_error;
 
     // Copy feedback
     std::string status_msg;
@@ -640,10 +661,12 @@ static void do_decode_token() {
         }
 
         // Re-encode to both formats
+        g_inspector.encode_v3_error.clear();
+        g_inspector.encode_v4_error.clear();
         try { g_inspector.encoded_v3 = nutcpp::encoding::TokenHelper::encode(token, "A"); }
-        catch (...) { g_inspector.encoded_v3 = "(encode failed)"; }
+        catch (const std::exception& e) { g_inspector.encoded_v3.clear(); g_inspector.encode_v3_error = e.what(); }
         try { g_inspector.encoded_v4 = nutcpp::encoding::TokenHelper::encode(token, "B"); }
-        catch (...) { g_inspector.encoded_v4 = "(encode failed)"; }
+        catch (const std::exception& e) { g_inspector.encoded_v4.clear(); g_inspector.encode_v4_error = e.what(); }
 
         g_inspector.has_result = true;
 
@@ -676,7 +699,7 @@ static Element render_token_inspector() {
     lines.push_back(hbox({text("Memo:    ") | bold, text(g_inspector.memo)}));
     lines.push_back(hbox({
         text("Total:   ") | bold,
-        text(std::to_string(g_inspector.grand_total) + " sats") | color(Color::Green) | bold,
+        text(format_amount(g_inspector.grand_total, g_inspector.unit)) | color(Color::Green) | bold,
         text("  (" + std::to_string(g_inspector.total_proofs) + " proofs)") | dim,
     }));
 
@@ -707,15 +730,23 @@ static Element render_token_inspector() {
 
         lines.push_back(hbox({
             text("  Subtotal: ") | bold,
-            text(std::to_string(group.total) + " sats") | color(Color::Yellow),
+            text(format_amount(group.total, g_inspector.unit)) | color(Color::Yellow),
         }));
     }
 
     // Re-encoded tokens
     lines.push_back(text(""));
     lines.push_back(text("Re-encoded") | bold | underlined);
-    lines.push_back(hbox({text("  cashuA: ") | bold, text(g_inspector.encoded_v3) | dim}));
-    lines.push_back(hbox({text("  cashuB: ") | bold, text(g_inspector.encoded_v4) | dim}));
+
+    if (!g_inspector.encoded_v3.empty())
+        lines.push_back(hbox({text("  cashuA: ") | bold, text(g_inspector.encoded_v3) | dim}));
+    else
+        lines.push_back(hbox({text("  cashuA: ") | bold, text(g_inspector.encode_v3_error) | color(Color::Red)}));
+
+    if (!g_inspector.encoded_v4.empty())
+        lines.push_back(hbox({text("  cashuB: ") | bold, text(g_inspector.encoded_v4) | dim}));
+    else
+        lines.push_back(hbox({text("  cashuB: ") | bold, text(g_inspector.encode_v4_error) | color(Color::Red)}));
 
     return vbox(std::move(lines)) | vscroll_indicator | yframe;
 }
@@ -861,15 +892,17 @@ int main() {
         }
     });
 
+    auto inspector_copy_controls = Container::Horizontal({
+        copy_v3_button,
+        copy_v4_button,
+    }) | Maybe([&] { return g_inspector.has_result; });
+
     auto inspector_controls = Container::Vertical({
         Container::Horizontal({
             inspector_token_input,
             decode_button,
         }),
-        Container::Horizontal({
-            copy_v3_button,
-            copy_v4_button,
-        }),
+        inspector_copy_controls,
     });
 
     // Right panel: only the active screen's controls are visible and focusable.
