@@ -142,11 +142,24 @@ static std::string format_amount(uint64_t raw, const std::string& unit) {
 
 static std::vector<nutcpp::Proof> g_wallet_proofs;
 
-static uint64_t wallet_balance_locked() {
-    uint64_t total = 0;
-    for (auto& p : g_wallet_proofs)
-        total += p.amount;
-    return total;
+// Returns balance per unit, e.g. {{"sat", 500}, {"usd", 150}}
+// Requires g_mutex held by caller.
+static std::map<std::string, uint64_t> wallet_balances_locked() {
+    // Build keyset_id -> unit map and seed all active units with 0
+    std::map<std::string, std::string> kid_to_unit;
+    std::map<std::string, uint64_t> balances;
+    for (auto& ki : g_keys_items) {
+        kid_to_unit[ki.id.to_string()] = ki.unit;
+        if (ki.active.value_or(false))
+            balances[ki.unit];  // insert 0 if not present
+    }
+
+    for (auto& p : g_wallet_proofs) {
+        auto it = kid_to_unit.find(p.id.to_string());
+        std::string unit = (it != kid_to_unit.end()) ? it->second : "?";
+        balances[unit] += p.amount;
+    }
+    return balances;
 }
 
 // ============================================================
@@ -227,6 +240,7 @@ struct MintInfoState {
         std::string unit;
         std::string active;
         std::string fee;
+        uint64_t fee_ppk = 0;  // numeric fee for compute_fee
     };
     std::vector<KeysetRow> keysets;
 };
@@ -280,8 +294,9 @@ static void fetch_mint_info(ScreenInteractive* screen, std::string url) {
             row.id = ks.id.to_string();
             row.unit = ks.unit;
             row.active = ks.active ? "yes" : "no";
-            row.fee = ks.input_fee_ppk.has_value()
-                ? std::to_string(ks.input_fee_ppk.value()) + " ppk"
+            row.fee_ppk = ks.input_fee_ppk.value_or(0);
+            row.fee = row.fee_ppk > 0
+                ? std::to_string(row.fee_ppk) + " ppk"
                 : "-";
             g_mint_info.keysets.push_back(std::move(row));
         }
@@ -315,6 +330,7 @@ static void fetch_mint_info(ScreenInteractive* screen, std::string url) {
         g_receive.has_result = false;
         g_receive.received_proofs.clear();
         g_receive.received_total = 0;
+        g_receive.unit.clear();
         g_wallet_proofs.clear();
 
         g_mint_url = url;
@@ -657,6 +673,10 @@ static void do_receive_ecash(ScreenInteractive* screen, std::string token_str) {
         if (token.tokens.empty() || token.tokens[0].proofs.empty())
             throw std::runtime_error("Token has no proofs");
 
+        if (token.tokens.size() > 1)
+            throw std::runtime_error("Multi-mint tokens are not supported. Token contains "
+                + std::to_string(token.tokens.size()) + " mint entries.");
+
         std::string token_mint = token.tokens[0].mint;
         auto& proofs = token.tokens[0].proofs;
 
@@ -688,15 +708,9 @@ static void do_receive_ecash(ScreenInteractive* screen, std::string token_str) {
         std::map<nutcpp::KeysetId, uint64_t> keyset_fees;
         {
             std::lock_guard<std::mutex> lock(g_mutex);
-            // Get fees from keysets response (cached in g_mint_info)
             for (auto& ks : g_mint_info.keysets) {
-                // Parse fee from "X ppk" format
-                if (ks.fee != "-") {
-                    try {
-                        uint64_t ppk = std::stoull(ks.fee);
-                        keyset_fees[nutcpp::KeysetId(ks.id)] = ppk;
-                    } catch (...) {}
-                }
+                if (ks.fee_ppk > 0)
+                    keyset_fees[nutcpp::KeysetId(ks.id)] = ks.fee_ppk;
             }
         }
 
@@ -707,19 +721,27 @@ static void do_receive_ecash(ScreenInteractive* screen, std::string token_str) {
 
         uint64_t output_total = input_total - fee;
 
-        // 4. Create blinded outputs
+        // 4. Create blinded outputs — find active keyset matching token unit
+        std::string token_unit = token.unit.value_or("sat");
         nutcpp::KeysetId kid("0000000000000000");
         nutcpp::Keyset keyset;
         {
             std::lock_guard<std::mutex> lock(g_mutex);
-            if (!g_active_keyset) {
-                g_receive.error = "No active keyset found";
+            bool found = false;
+            for (auto& ki : g_keys_items) {
+                if (ki.active.value_or(false) && ki.unit == token_unit) {
+                    kid = ki.id;
+                    keyset = ki.keys;
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                g_receive.error = "No active keyset for unit \"" + token_unit + "\"";
                 g_receive.loading = false;
                 screen->PostEvent(Event::Custom);
                 return;
             }
-            kid = g_active_keyset->id;
-            keyset = g_active_keyset->keys;
         }
 
         auto amounts = nutcpp::wallet::split_amount(output_total);
@@ -1324,18 +1346,26 @@ int main() {
         });
         right_panel = right_panel | border | flex;
 
-        // Status bar with balance
+        // Status bar with balance per unit
         std::string status;
-        uint64_t balance = 0;
+        std::string balance_str;
         {
             std::lock_guard<std::mutex> lock(g_mutex);
             status = g_status;
-            balance = wallet_balance_locked();
+            auto balances = wallet_balances_locked();
+            if (balances.empty()) {
+                balance_str = "Balance: 0";
+            } else {
+                balance_str = "Balance:";
+                for (auto& [unit, amount] : balances)
+                    balance_str += " " + format_amount(amount, unit) + " |";
+                balance_str.pop_back(); // remove trailing '|'
+            }
         }
         Element status_bar = hbox({
             text(status) | color(Color::Cyan),
             filler(),
-            text("Balance: " + std::to_string(balance) + " sats") | bold | color(Color::Yellow),
+            text(balance_str) | bold | color(Color::Yellow),
         });
 
         // Main layout
