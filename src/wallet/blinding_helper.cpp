@@ -3,6 +3,7 @@
 #include "nutcpp/encoding/convert_utils.h"
 #include <stdexcept>
 #include <cstring>
+#include "../crypto/secure_zero.h"
 
 #ifdef __linux__
 #include <sys/random.h>
@@ -73,7 +74,7 @@ BlindedOutputs create_blinded_outputs(const vector<uint64_t>& amounts,
         unsigned char r_bytes[32];
         fill_random(r_bytes, 32);
         PrivKey r(r_bytes);
-        explicit_bzero(r_bytes, 32);
+        internal::secure_zero(r_bytes, 32);
 
         PubKey Y = secret.to_curve();
         PubKey B_ = crypto::compute_B_(Y, r);
