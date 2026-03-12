@@ -4,6 +4,7 @@
 #include <sstream>
 #include <cstring>
 #include <utility>
+#include "../crypto/secure_zero.h"
 #include <openssl/hmac.h>
 #include <openssl/evp.h>
 #include <secp256k1.h>
@@ -48,7 +49,7 @@ static secp256k1_context* get_context() {
             secp256k1_context_destroy(c);
             throw runtime_error("secp256k1_context_randomize failed");
         }
-        explicit_bzero(seed, 32);
+        internal::secure_zero(seed, 32);
         return c;
     }();
     return ctx;
@@ -73,7 +74,7 @@ BIP32Key bip32_master_key(const uint8_t* seed, size_t seed_len) {
     memcpy(key.private_key, hash, 32);
     memcpy(key.chain_code, hash + 32, 32);
 
-    explicit_bzero(hash, 64);
+    internal::secure_zero(hash, 64);
 
     // Validate key is in valid range (0 < key < n)
     if (!secp256k1_ec_seckey_verify(get_context(), key.private_key))
@@ -125,8 +126,8 @@ static BIP32Key derive_child(const BIP32Key& parent, uint32_t index, bool harden
 
     memcpy(child.chain_code, hash + 32, 32);
 
-    explicit_bzero(hash, 64);
-    explicit_bzero(data, sizeof(data));
+    internal::secure_zero(hash, 64);
+    internal::secure_zero(data, sizeof(data));
     return child;
 }
 
@@ -166,11 +167,11 @@ BIP32Key bip32_derive_path(const string& path,
 
     for (const auto& [index, hardened] : segments) {
         BIP32Key child = derive_child(key, index, hardened);
-        explicit_bzero(key.private_key, 32);
-        explicit_bzero(key.chain_code, 32);
+        internal::secure_zero(key.private_key, 32);
+        internal::secure_zero(key.chain_code, 32);
         key = child;
-        explicit_bzero(child.private_key, 32);
-        explicit_bzero(child.chain_code, 32);
+        internal::secure_zero(child.private_key, 32);
+        internal::secure_zero(child.chain_code, 32);
     }
 
     return key;

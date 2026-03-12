@@ -8,6 +8,7 @@
 #include <cstring>
 #include <stdexcept>
 #include <set>
+#include "../crypto/secure_zero.h"
 
 #ifdef __linux__
 #include <sys/random.h>
@@ -172,7 +173,7 @@ pair<P2PKProofSecret, PubKey> build_blinded(P2PKBuilder builder) {
     unsigned char key_bytes[32];
     fill_random(key_bytes, 32);
     PrivKey e(key_bytes);
-    explicit_bzero(key_bytes, 32);
+    internal::secure_zero(key_bytes, 32);
 
     PubKey E = e.get_pub_key();
     auto ps = build_blinded(move(builder), e);
@@ -220,7 +221,7 @@ static pair<bool, P2PKWitness> try_sign_blind_path(
                         found = true;
                     }
                 }
-                explicit_bzero(sk, 32);
+                internal::secure_zero(sk, 32);
             }
             if (found) break;
 
@@ -238,7 +239,7 @@ static pair<bool, P2PKWitness> try_sign_blind_path(
                         found = true;
                     }
                 }
-                explicit_bzero(sk, 32);
+                internal::secure_zero(sk, 32);
             }
             if (found) break;
         }

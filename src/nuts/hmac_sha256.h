@@ -9,6 +9,7 @@
 #include <vector>
 #include <cstdint>
 #include <cstring>
+#include "../crypto/secure_zero.h"
 
 namespace nutcpp {
 namespace internal {
@@ -48,9 +49,9 @@ inline std::vector<unsigned char> hmac_sha256(const unsigned char* key, size_t k
     auto result = outer.finalize();
 
     // Wipe key-derived material from stack
-    explicit_bzero(k_prime, BLOCK_SIZE);
-    explicit_bzero(ipad, BLOCK_SIZE);
-    explicit_bzero(opad, BLOCK_SIZE);
+    secure_zero(k_prime, BLOCK_SIZE);
+    secure_zero(ipad, BLOCK_SIZE);
+    secure_zero(opad, BLOCK_SIZE);
 
     return result;
 }

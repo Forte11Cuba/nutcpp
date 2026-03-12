@@ -1,6 +1,7 @@
 #include "nutcpp/types/priv_key.h"
 #include "nutcpp/encoding/convert_utils.h"
 #include <cstring>
+#include "../crypto/secure_zero.h"
 
 using namespace std;
 
@@ -14,7 +15,7 @@ static const secp256k1_context* get_context() {
 // --- PrivKey ---
 
 PrivKey::~PrivKey() {
-    explicit_bzero(key_, 32);
+    internal::secure_zero(key_, 32);
 }
 
 PrivKey::PrivKey(const string& hex) {

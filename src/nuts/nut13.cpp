@@ -5,6 +5,7 @@
 
 #include <stdexcept>
 #include <cstring>
+#include "../crypto/secure_zero.h"
 
 using namespace std;
 
@@ -41,8 +42,8 @@ static string derive_secret_v0(const vector<uint8_t>& seed,
     string path = get_derivation_path(keyset_id, counter, true);
     auto key = internal::bip32_derive_path(path, seed.data(), seed.size());
     string hex = bytes_to_hex(key.private_key, 32);
-    explicit_bzero(key.private_key, 32);
-    explicit_bzero(key.chain_code, 32);
+    internal::secure_zero(key.private_key, 32);
+    internal::secure_zero(key.chain_code, 32);
     return hex;
 }
 
@@ -52,8 +53,8 @@ static vector<uint8_t> derive_blinding_factor_v0(const vector<uint8_t>& seed,
     string path = get_derivation_path(keyset_id, counter, false);
     auto key = internal::bip32_derive_path(path, seed.data(), seed.size());
     vector<uint8_t> r(key.private_key, key.private_key + 32);
-    explicit_bzero(key.private_key, 32);
-    explicit_bzero(key.chain_code, 32);
+    internal::secure_zero(key.private_key, 32);
+    internal::secure_zero(key.chain_code, 32);
     return r;
 }
 
