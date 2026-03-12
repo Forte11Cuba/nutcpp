@@ -8,6 +8,10 @@
 
 #if defined(_WIN32)
 #include <windows.h>
+#elif defined(__FreeBSD__)
+#include <strings.h>
+#else
+#include <cstring>
 #endif
 
 namespace nutcpp {
